@@ -1,7 +1,12 @@
+import sys
 import pytest
+import json
+import subprocess
 import pandas as pd
 from catomatic.CatalogueBuilder import BuildCatalogue
 from scipy.stats import norm, binomtest, fisher_exact
+from unittest.mock import patch
+
 
 # a left join of phenotypes and mutations will give:
 """   
@@ -40,6 +45,25 @@ def phenotype_data():
             "PHENOTYPE": ["R", "S", "R", "S", "R", "S", "S", "S", "R", "R"],
         }
     )
+
+
+@pytest.fixture
+def phenotypes_file(phenotype_data, tmp_path):
+    file = tmp_path / "phenotypes.csv"
+    phenotype_data.to_csv(file, index=False)
+    return str(file)
+
+
+@pytest.fixture
+def mutations_file(mutation_data, tmp_path):
+    file = tmp_path / "mutations.csv"
+    mutation_data.to_csv(file, index=False)
+    return str(file)
+
+
+@pytest.fixture
+def output_file(tmp_path):
+    return str(tmp_path / "output.json")
 
 
 @pytest.fixture
@@ -331,7 +355,7 @@ def test_update(builder, wildcards):
 
 @pytest.mark.parametrize("builder", [{"p": 0.95}], indirect=True)
 def test_build_piezo(builder, wildcards):
-    #build a piezo compitable catalogue df
+    # build a piezo compitable catalogue df
     catalogue = builder.build_piezo(
         "genbank", "test", "1", "drug", wildcards, grammar="TEST", values="SUR"
     )
@@ -344,3 +368,127 @@ def test_build_piezo(builder, wildcards):
     assert catalogue[catalogue.MUTATION == "g@A2S"].PREDICTION.values[0] == "S"
     # check wildcards are in the catalogue, with correct classification
     assert catalogue[catalogue.MUTATION == "g@*="].PREDICTION.values[0] == "S"
+
+
+def test_cli_help():
+    result = subprocess.run(
+        [sys.executable, "src/catomatic/CatalogueBuilder.py", "--help"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    assert "usage:" in result.stdout.decode()
+
+
+def test_cli_execution(phenotypes_file, mutations_file, output_file):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "src/catomatic/CatalogueBuilder.py",
+            "--samples",
+            phenotypes_file,
+            "--mutations",
+            mutations_file,
+            "--to_json",
+            "--outfile",
+            output_file,
+            "--test",
+            "Binomial",
+            "--background",
+            "0.1",
+            "--p",
+            "0.95",
+            "--strict_unlock",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, "Subprocess failed with exit status: {}".format(
+        result.returncode
+    )
+
+
+def test_to_json_output(phenotypes_file, mutations_file, output_file):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "src/catomatic/CatalogueBuilder.py",
+            "--samples",
+            phenotypes_file,
+            "--mutations",
+            mutations_file,
+            "--to_json",
+            "--outfile",
+            output_file,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode == 0, "Subprocess failed with exit status: {}".format(
+        result.returncode
+    )
+
+    # Load and verify the JSON output
+    with open(output_file, "r") as f:
+        data = json.load(f)
+    assert isinstance(data, dict)
+    assert "g@A1S" in data
+    assert "g@A2S" in data
+    assert "g@A3S" in data
+
+
+def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path):
+    wildcards_file = tmp_path / "wildcards.json"
+    wildcards_file.write_text(
+        json.dumps(
+            {"g@-*?": {"pred": "U", "evid": {}}, "g@*=": {"pred": "S", "evid": {}}}
+        )
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            "src/catomatic/CatalogueBuilder.py",
+            "--samples",
+            phenotypes_file,
+            "--mutations",
+            mutations_file,
+            "--to_piezo",
+            "--outfile",
+            output_file,
+            "--genbank_ref",
+            "genbank",
+            "--catalogue_name",
+            "test",
+            "--version",
+            "1",
+            "--drug",
+            "drug",
+            "--wildcards",
+            str(wildcards_file),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        print("Error output:", result.stderr.decode())
+    assert result.returncode == 0, "Subprocess failed with exit status: {}".format(
+        result.returncode
+    )
+
+    # Load and verify the Piezo CSV output
+    piezo_df = pd.read_csv(output_file)
+    assert "GENBANK_REFERENCE" in piezo_df.columns
+    assert piezo_df.loc[0, "GENBANK_REFERENCE"] == "genbank"
+    assert piezo_df.loc[0, "CATALOGUE_NAME"] == "test"
+    assert piezo_df.loc[0, "CATALOGUE_VERSION"] == 1
+    assert piezo_df.loc[0, "DRUG"] == "drug"
+    assert "g@A2S" in piezo_df["MUTATION"].values
+    assert "g@*=" in piezo_df["MUTATION"].values
