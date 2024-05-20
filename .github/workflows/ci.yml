@@ -1,0 +1,35 @@
+name: Conda CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+        name: Check out repository code
+
+      - name: Set up Python
+        uses: conda-incubator/setup-miniconda@v2
+        with:
+          activate-environment: myenv
+          environment-file: environment.yml
+          python-version: 3.9
+          auto-activate-base: false
+
+      - name: Install Dependencies
+        run: |
+          conda info --all
+          conda list
+
+      - name: Run Pytest and Coverage
+        run: |
+          conda activate myenv
+          pytest --cov=my_package tests/ --cov-report=xml
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v2
+        with:
+          files: ./coverage.xml
+            ${{ secrets.CODECOV_TOKEN }}

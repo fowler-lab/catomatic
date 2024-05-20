@@ -1,12 +1,10 @@
 import os
 import json
 import piezo
+import argparse
+import numpy as np
 import pandas as pd
 from scipy.stats import norm, binomtest, fisher_exact
-from collections import OrderedDict
-
-
-import numpy as np
 
 
 class BuildCatalogue:
@@ -56,6 +54,9 @@ class BuildCatalogue:
         p=0.95,
         strict_unlock=False,
     ):
+
+        samples = pd.read_csv(samples) if isinstance(samples, str) else samples
+        mutations = pd.read_csv(mutations) if isinstance(mutations, str) else mutations
 
         assert all(
             column in samples.columns for column in ["UNIQUEID", "PHENOTYPE"]
@@ -413,7 +414,6 @@ class BuildCatalogue:
             self: Returns the instance with updated catalogue.
         """
 
-
         if not os.path.exists("./temp"):
             os.makedirs("./temp")
 
@@ -426,15 +426,15 @@ class BuildCatalogue:
             # if an aggregate rule, and replacement has been specified
             elif replace:
                 assert (
-                wildcards is not None
-            ), "wildcards must be supplied if replace is used"
+                    wildcards is not None
+                ), "wildcards must be supplied if replace is used"
                 # write rule in piezo format to temp (need piezo to find vars)
                 wildcards[rule] = {"pred": "R", "evid": {}}
                 self.build_piezo(
                     "",
                     "",
                     "",
-                    'plop',
+                    "plop",
                     wildcards,
                     public=False,
                 ).to_csv("./temp/rule.csv", index=False)
@@ -444,7 +444,7 @@ class BuildCatalogue:
                 target_vars = {
                     k: v["evid"]
                     for k, v in self.catalogue.items()
-                    if piezo_rule.predict(k)['plop'] == "R"
+                    if piezo_rule.predict(k)["plop"] == "R"
                 }
 
                 # remove those to be replaced
@@ -470,6 +470,58 @@ class BuildCatalogue:
 
         # Return the catalogue sorted by the order in which mutations were added
         return {key: self.catalogue[key] for key in self.entry if key in self.catalogue}
+
+    def to_json(self, outfile):
+        """
+        Exports the catalogue to a JSON file.
+
+        Parameters:
+            outfile (str): The path to the output JSON file where the catalogue will be saved.
+        """
+        with open(outfile, "w") as f:
+            json.dump(self.catalogue, f, indent=4)
+
+    def to_piezo(
+        self,
+        genbank_ref,
+        catalogue_name,
+        version,
+        drug,
+        wildcards,
+        outfile,
+        grammar="GARC1",
+        values="RUS",
+        public=True,
+    ):
+        """
+        Exports a pizeo-compatible dataframe as a csv file.
+
+        Parameters:
+            genbank_ref (str): GenBank reference identifier.
+            catalogue_name (str): Name of the catalogue.
+            version (str): Version of the catalogue.
+            drug (str): Target drug associated with the mutations.
+            wildcards (dict): Piezo wildcard (default rules) mutations with phenotypes.
+            outfile: The path to the output csv file where the catalogue will be saved.
+            grammar (str, optional): Grammar used in the catalogue, default "GARC1" (no other grammar currently supported).
+            values (str, optional): Prediction values, default "RUS" representing each phenotype (no other values currently supported).
+            public (bool, optional): private or public call
+        """
+
+        with open(wildcards) as w:
+            wildcards = json.load(w)
+
+        piezo_df = self.build_piezo(
+            genbank_ref,
+            catalogue_name,
+            version,
+            drug,
+            wildcards,
+            grammar,
+            values,
+            public,
+        )
+        piezo_df.to_csv(outfile)
 
     def build_piezo(
         self,
@@ -544,7 +596,6 @@ class BuildCatalogue:
                 OTHER=json.dumps({}),
             )[columns]
         )
-        print(piezo_catalogue)
 
         if public:
             # Sort the catalogue by the order in which mutations were added
@@ -553,3 +604,132 @@ class BuildCatalogue:
             piezo_catalogue = piezo_catalogue[columns]
 
         return piezo_catalogue
+
+    @staticmethod
+    def parse_opt():
+        parser = argparse.ArgumentParser(
+            description="Build a catalogue and optionally export to Piezo format."
+        )
+        parser.add_argument(
+            "--samples", required=True, type=str, help="Path to the samples file."
+        )
+        parser.add_argument(
+            "--mutations", required=True, type=str, help="Path to the mutations file."
+        )
+        parser.add_argument(
+            "--FRS",
+            type=float,
+            default=None,
+            help="Optional: Fraction Read Support threshold.",
+        )
+        parser.add_argument(
+            "--seed", nargs="+", help="Optional: List of seed mutations."
+        )
+        parser.add_argument(
+            "--test",
+            type=str,
+            choices=[None, "Binomial", "Fisher"],
+            default=None,
+            help="Optional: Type of statistical test to run.",
+        )
+        parser.add_argument(
+            "--background",
+            type=float,
+            default=None,
+            help="Optional: Background mutation rate for the binomial test.",
+        )
+        parser.add_argument(
+            "--p",
+            type=float,
+            default=0.95,
+            help="Significance level for statistical testing.",
+        )
+        parser.add_argument(
+            "--strict_unlock",
+            action="store_true",
+            help="Enforce strict unlocking for classifications.",
+        )
+        parser.add_argument(
+            "--to_json",
+            action="store_true",
+            help="Flag to trigger exporting the catalogue to JSON format."
+        )
+        parser.add_argument(
+            "--outfile",
+            type=str,
+            help="Path to output file for exporting the catalogue. Used with --to_json or --to_piezo."
+        )
+        parser.add_argument(
+            "--to_piezo",
+            action="store_true",
+            help="Flag to export catalogue to Piezo format.",
+        )
+        parser.add_argument(
+            "--genbank_ref", type=str, help="GenBank reference for the catalogue."
+        )
+        parser.add_argument("--catalogue_name", type=str, help="Name of the catalogue.")
+        parser.add_argument("--version", type=str, help="Version of the catalogue.")
+        parser.add_argument(
+            "--drug", type=str, help="Drug associated with the mutations."
+        )
+        parser.add_argument(
+            "--wildcards", type=str, help="JSON file with wildcard rules."
+        )
+        parser.add_argument(
+            "--grammar",
+            type=str,
+            default="GARC1",
+            help="Grammar used in the catalogue.",
+        )
+        parser.add_argument(
+            "--values",
+            type=str,
+            default="RUS",
+            help="Values used for predictions in the catalogue.",
+        )
+        return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = BuildCatalogue.parse_opt()
+    catalogue = BuildCatalogue(
+        samples=args.samples,
+        mutations=args.mutations,
+        FRS=args.FRS,
+        seed=args.seed,
+        test=args.test,
+        background=args.background,
+        p=args.p,
+        strict_unlock=args.strict_unlock,
+    )
+
+    if args.to_json:
+        if not args.outfile:
+            print("Please specify an output file with --outfile when using --to_json")
+            exit(1)
+        catalogue.to_json(args.outfile)
+
+    # handle Piezo output if specified
+    if args.to_piezo:
+        if not all(
+            [
+                args.genbank_ref,
+                args.catalogue_name,
+                args.version,
+                args.drug,
+                args.wildcards,
+                args.outfile,
+            ]
+        ):
+            print("Missing required arguments for exporting to Piezo format.")
+            exit(1)
+        catalogue.to_piezo(
+            genbank_ref=args.genbank_ref,
+            catalogue_name=args.catalogue_name,
+            version=args.version,
+            drug=args.drug,
+            wildcards=args.wildcards,
+            outfile=args.outfile,
+            grammar=args.grammar,
+            values=args.values,
+        )
