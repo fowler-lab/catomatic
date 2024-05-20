@@ -1,3 +1,5 @@
+[![codecov](https://codecov.io/gh/fowler-lab/catomatic/branch/main/graph/badge.svg?token=8fnOy6rHCd)](https://codecov.io/gh/fowler-lab/catomatic)
+
 # catomatic
 
 Python code that algorithmically builds antimicrobrial resistance catalogues of mutations.
