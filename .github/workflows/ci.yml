@@ -7,26 +7,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
-        name: Check out repository code
+      - name: Check out repository code
+        uses: actions/checkout@v2
 
-      - name: Set up Python
+      - name: Set up Conda
         uses: conda-incubator/setup-miniconda@v2
         with:
-          activate-environment: myenv
-          environment-file: environment.yml
-          python-version: 3.9
           auto-activate-base: false
 
-      - name: Install Dependencies
+      - name: Create Conda environment
+        run: conda env create --file env.yml
+
+      - name: Activate Conda environment
+        run: echo "conda activate catomatic" >> $GITHUB_ENV
+
+      - name: Install catomatic in editable mode
+        run: |
+          conda activate catomatic
+          pip install -e .
+
+      - name: Verify Conda environment
         run: |
           conda info --all
           conda list
 
       - name: Run Pytest and Coverage
         run: |
-          conda activate myenv
-          pytest --cov=my_package tests/ --cov-report=xml
+          conda activate catomatic
+          pytest --cov=catomatic tests/ --cov-report=xml
 
       - name: Upload Coverage to Codecov
         uses: codecov/codecov-action@v2

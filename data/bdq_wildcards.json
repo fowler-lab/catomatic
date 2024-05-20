@@ -1,0 +1,126 @@
+{
+    "Rv0678@*=": {
+        "pred": "S",
+        "evid": {}
+    },
+    "Rv0678@-*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "Rv0678@*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "Rv0678@-*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "Rv0678@*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "Rv0678@del_0.0": {
+        "pred": "U",
+        "evid": {}
+    },
+    "pepQ@*=": {
+        "pred": "S",
+        "evid": {}
+    },
+    "pepQ@-*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "pepQ@*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "pepQ@-*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "pepQ@*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "pepQ@del_0.0": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpS5@del_0.0": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpS5@*=": {
+        "pred": "S",
+        "evid": {}
+    },
+    "mmpS5@-*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpS5@*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpS5@-*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpS5@*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpL5@*=": {
+        "pred": "S",
+        "evid": {}
+    },
+    "mmpL5@-*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpL5@*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpL5@-*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpL5@*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "mmpL5@del_0.0": {
+        "pred": "U",
+        "evid": {}
+    },
+    "atpE@*=": {
+        "pred": "S",
+        "evid": {}
+    },
+    "atpE@-*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "atpE@*_indel": {
+        "pred": "U",
+        "evid": {}
+    },
+    "atpE@-*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "atpE@*?": {
+        "pred": "U",
+        "evid": {}
+    },
+    "atpE@RFill": {
+        "pred": "R",
+        "evid": {}
+    },
+    "atpE@del_0.0": {
+        "pred": "U",
+        "evid": {}
+    }
+}
