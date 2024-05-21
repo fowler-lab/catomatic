@@ -690,7 +690,7 @@ class BuildCatalogue:
         return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main():
     args = BuildCatalogue.parse_opt()
     catalogue = BuildCatalogue(
         samples=args.samples,
@@ -709,18 +709,8 @@ if __name__ == "__main__":
             exit(1)
         catalogue.to_json(args.outfile)
 
-    # handle Piezo output if specified
     if args.to_piezo:
-        if not all(
-            [
-                args.genbank_ref,
-                args.catalogue_name,
-                args.version,
-                args.drug,
-                args.wildcards,
-                args.outfile,
-            ]
-        ):
+        if not all([args.genbank_ref, args.catalogue_name, args.version, args.drug, args.wildcards, args.outfile]):
             print("Missing required arguments for exporting to Piezo format.")
             exit(1)
         catalogue.to_piezo(
@@ -733,3 +723,6 @@ if __name__ == "__main__":
             grammar=args.grammar,
             values=args.values,
         )
+
+if __name__ == "__main__":
+    main()
