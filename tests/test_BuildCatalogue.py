@@ -372,7 +372,7 @@ def test_build_piezo(builder, wildcards):
 
 def test_cli_help():
     result = subprocess.run(
-        [sys.executable, "src/catomatic/CatalogueBuilder.py", "--help"],
+        [sys.executable, "-m", "catomatic.CatalogueBuilder", "--help"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=True,
@@ -384,7 +384,8 @@ def test_cli_execution(phenotypes_file, mutations_file, output_file):
     result = subprocess.run(
         [
             sys.executable,
-            "src/catomatic/CatalogueBuilder.py",
+            "-m",
+            "catomatic.CatalogueBuilder",
             "--samples",
             phenotypes_file,
             "--mutations",
@@ -414,7 +415,8 @@ def test_to_json_output(phenotypes_file, mutations_file, output_file):
     result = subprocess.run(
         [
             sys.executable,
-            "src/catomatic/CatalogueBuilder.py",
+            "-m",
+            "catomatic.CatalogueBuilder",
             "--samples",
             phenotypes_file,
             "--mutations",
@@ -440,6 +442,37 @@ def test_to_json_output(phenotypes_file, mutations_file, output_file):
     assert "g@A3S" in data
 
 
+def test_missing_piezo(phenotypes_file, mutations_file, output_file):
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            "-m",
+            "catomatic.CatalogueBuilder",
+            "--samples",
+            phenotypes_file,
+            "--mutations",
+            mutations_file,
+            "--to_piezo",
+            "--outfile",
+            output_file,
+            "--genbank_ref",
+            "genbank",
+            "--catalogue_name",
+            "test",
+            "--version",
+            "1",
+        ], #missing drug and wildcards
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode != 0 #error 
+
+
 def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path):
     wildcards_file = tmp_path / "wildcards.json"
     wildcards_file.write_text(
@@ -454,7 +487,8 @@ def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path)
             "-m",
             "coverage",
             "run",
-            "src/catomatic/CatalogueBuilder.py",
+            "-m",
+            "catomatic.CatalogueBuilder",
             "--samples",
             phenotypes_file,
             "--mutations",
