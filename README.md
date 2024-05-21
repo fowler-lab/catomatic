@@ -20,6 +20,10 @@ The generated catalogue can be returned either as a dictionary, or as a Pandas d
 
 Contingency tables, proportions, p_values, and Wilson's Confidence Intervals are logged under the 'EVIDENCE' column of the catalogue.
 
+A workflow with example parameters:
+
+![Catalogue Diagram](docs/workflow.png)
+
 ## Installation
 
 ### Using Conda
