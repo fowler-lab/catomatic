@@ -32,11 +32,12 @@ It is recommended to manage the Python environment and dependencies through Cond
 
 #### Create and Activate Environment
 
-First, ensure that you have Conda installed. Then, create and activate a new environment:
+First, ensure that you have Conda installed. Then, create and activate a new environment, and install catomatic:
 
 ```bash
 conda env create -f env.yml
 conda activate catomatic
+pip install .
 ```
 
 ## Running catomatic
