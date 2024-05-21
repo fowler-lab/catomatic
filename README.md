@@ -31,7 +31,7 @@ It is recommended to manage the Python environment and dependencies through Cond
 First, ensure that you have Conda installed. Then, create and activate a new environment:
 
 ```bash
-conda env create -f environment.yml
+conda env create -f env.yml
 conda activate catomatic
 ```
 
@@ -39,7 +39,7 @@ conda activate catomatic
 
 ### CLI
 
-After installation, the simplest way to run the catomatic catalogue builder is via the command line interface. --to_piezo or --to_json flags will need to specified to save the catalogue (with additional arguments if using --to_piezo)
+After installation, the simplest way to run the catomatic catalogue builder is via the command line interface. ` --to_piezo`` or --to_json ` flags will need to specified to save the catalogue (with additional arguments if using --to_piezo)
 
 `BuildCatalogue --samples path/to/samples.csv --mutations path/to/mutations.csv  --to_json --outfile path/to/out/catalogue.json`
 
@@ -70,18 +70,18 @@ catalogue.return_piezo(genbank_ref='...', catalogue_name='...', version='...', d
 | `--samples`        | `str`   | Path to the samples file. Required.                                                               |
 | `--mutations`      | `str`   | Path to the mutations file. Required.                                                             |
 | `--FRS`            | `float` | Fraction Read Support threshold. Optional.                                                        |
-| `--seed`           | `list`  | List of seed mutations. Optional.                                                                 |
+| `--seed`           | `list`  | List of seed mutations using GARC grammar. Optional.                                              |
 | `--test`           | `str`   | Type of statistical test to run: `None`, `Binomial`, or `Fisher`. Optional.                       |
-| `--background`     | `float` | Background mutation rate for the binomial test. Optional.                                         |
+| `--background`     | `float` | Background mutation rate for the binomial test. Required if using test = Binomial. Optional.      |
 | `--p`              | `float` | Significance level for statistical testing. Optional. Defaults to `0.95`.                         |
-| `--strict_unlock`  | `bool`  | Enforce strict unlocking for classifications. Optional.                                           |
+| `--strict_unlock`  | `bool`  | Enforce strict unlocking for classifications, which requires p < 0.05. Optional.                  |
 | `--to_json`        | `bool`  | Export the catalogue to JSON format. Optional.                                                    |
 | `--outfile`        | `str`   | Path to output file for exporting the catalogue. Used with `--to_json` or `--to_piezo`. Optional. |
 | `--to_piezo`       | `bool`  | Export catalogue to Piezo format. Optional.                                                       |
-| `--genbank_ref`    | `str`   | GenBank reference for the catalogue. Optional.                                                    |
-| `--catalogue_name` | `str`   | Name of the catalogue. Optional.                                                                  |
-| `--version`        | `str`   | Version of the catalogue. Optional.                                                               |
-| `--drug`           | `str`   | Drug associated with the mutations. Optional.                                                     |
-| `--wildcards`      | `str`   | JSON file with wildcard rules. Optional.                                                          |
+| `--genbank_ref`    | `str`   | GenBank reference for the catalogue. Required if to_piezo = True. Optional.                       |
+| `--catalogue_name` | `str`   | Name of the catalogue. Required if to_piezo = True. Optional.                                     |
+| `--version`        | `str`   | Version of the catalogue. Required if to_piezo = True. Optional.                                  |
+| `--drug`           | `str`   | Drug associated with the mutations. Required if to_piezo = True. Optional.                        |
+| `--wildcards`      | `str`   | JSON file with wildcard rules. Required if to_piezo = True. Optional.                             |
 | `--grammar`        | `str`   | Grammar used in the catalogue. Optional. Defaults to `GARC1`.                                     |
 | `--values`         | `str`   | Values used for predictions in the catalogue. Optional. Defaults to `RUS`.                        |
