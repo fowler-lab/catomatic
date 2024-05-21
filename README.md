@@ -30,9 +30,10 @@ It is recommended to manage the Python environment and dependencies through Cond
 
 First, ensure that you have Conda installed. Then, create and activate a new environment:
 
-````bash
+```bash
 conda env create -f environment.yml
 conda activate catomatic
+```
 
 ## Running catomatic
 
@@ -60,7 +61,7 @@ catalogue.return_catalogue()
 
 #return the catalogue as a piezo-structured dataframe
 catalogue.return_piezo(genbank_ref='...', catalogue_name='...', version='...', drug='...', wildcards='path/to/wildcards.json')
-````
+```
 
 ### CLI Parameters
 
