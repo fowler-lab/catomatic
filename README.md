@@ -39,7 +39,7 @@ conda activate catomatic
 
 ### CLI
 
-After installation, the simplest way to run the catomatic catalogue builder is via the command line interface. ` --to_piezo` or '--to_json ` flags will need to specified to save the catalogue (with additional arguments if using --to_piezo)
+After installation, the simplest way to run the catomatic catalogue builder is via the command line interface. ` --to_piezo` or `--to_json ` flags will need to specified to save the catalogue (with additional arguments if using --to_piezo)
 
 `BuildCatalogue --samples path/to/samples.csv --mutations path/to/mutations.csv  --to_json --outfile path/to/out/catalogue.json`
 
