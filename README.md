@@ -57,9 +57,10 @@ or
 Should you which to run catomatic in a notebook, for example, you can do so simply by calling BuildCatalogue after import.
 
 ```python
-import catomatic
+from catomatic.CatalogueBuilder import BuildCatalogue
+
 #instantiate a catalogue object - this will build the catalogue
-catalogue = catomatic.BuildCatalogue(samples = samples_df, mutations = mutations_df)
+catalogue = BuildCatalogue(samples = samples_df, mutations = mutations_df)
 
 #return the catalogue as a dictionary in order of variant addition
 catalogue.return_catalogue()
