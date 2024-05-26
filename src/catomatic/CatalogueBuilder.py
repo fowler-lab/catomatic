@@ -429,12 +429,16 @@ class BuildCatalogue:
                     wildcards is not None
                 ), "wildcards must be supplied if replace is used"
                 # write rule in piezo format to temp (need piezo to find vars)
+                if isinstance(wildcards, str):
+                    # if a path is supplied, read from the file
+                    with open(wildcards) as f:
+                        wildcards = json.load(f)
                 wildcards[rule] = {"pred": "R", "evid": {}}
                 self.build_piezo(
                     "",
                     "",
                     "",
-                    "plop",
+                    "temp",
                     wildcards,
                     public=False,
                 ).to_csv("./temp/rule.csv", index=False)
@@ -444,9 +448,9 @@ class BuildCatalogue:
                 target_vars = {
                     k: v["evid"]
                     for k, v in self.catalogue.items()
-                    if piezo_rule.predict(k)["plop"] == "R"
+                    if (predict := piezo_rule.predict(k)) == "R"
+                    or (isinstance(predict, dict) and predict.get("temp") == "R")
                 }
-
                 # remove those to be replaced
                 for k in target_vars.keys():
                     if k in self.entry:
@@ -542,7 +546,7 @@ class BuildCatalogue:
             catalogue_name (str): Name of the catalogue.
             version (str): Version of the catalogue.
             drug (str): Target drug associated with the mutations.
-            wildcards (dict): Piezo wildcard (default rules) mutations with phenotypes.
+            wildcards (dict or path): Piezo wildcard (default rules) mutations with phenotypes.
             grammar (str, optional): Grammar used in the catalogue, default "GARC1" (no other grammar currently supported).
             values (str, optional): Prediction values, default "RUS" representing each phenotype (no other values currently supported).
             public (bool, optional): private or public call
@@ -553,6 +557,10 @@ class BuildCatalogue:
         # if user-called
         if public:
             # add piezo wildcards to the catalogue
+            if isinstance(wildcards, str):
+                # if a path is supplied, read from the file
+                with open(wildcards) as f:
+                    wildcards = json.load(f)
             [self.add_mutation(k, v["pred"], v["evid"]) for k, v in wildcards.items()]
             data = self.catalogue
         else:
@@ -652,12 +660,12 @@ class BuildCatalogue:
         parser.add_argument(
             "--to_json",
             action="store_true",
-            help="Flag to trigger exporting the catalogue to JSON format."
+            help="Flag to trigger exporting the catalogue to JSON format.",
         )
         parser.add_argument(
             "--outfile",
             type=str,
-            help="Path to output file for exporting the catalogue. Used with --to_json or --to_piezo."
+            help="Path to output file for exporting the catalogue. Used with --to_json or --to_piezo.",
         )
         parser.add_argument(
             "--to_piezo",
@@ -710,7 +718,16 @@ def main():
         catalogue.to_json(args.outfile)
 
     if args.to_piezo:
-        if not all([args.genbank_ref, args.catalogue_name, args.version, args.drug, args.wildcards, args.outfile]):
+        if not all(
+            [
+                args.genbank_ref,
+                args.catalogue_name,
+                args.version,
+                args.drug,
+                args.wildcards,
+                args.outfile,
+            ]
+        ):
             print("Missing required arguments for exporting to Piezo format.")
             exit(1)
         catalogue.to_piezo(
@@ -723,6 +740,7 @@ def main():
             grammar=args.grammar,
             values=args.values,
         )
+
 
 if __name__ == "__main__":
     main()

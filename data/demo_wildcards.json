@@ -1,0 +1,26 @@
+{
+  "gene@*=": {
+    "pred": "S",
+    "evid": {}
+  },
+  "gene@-*_indel": {
+    "pred": "U",
+    "evid": {}
+  },
+  "gene@*_indel": {
+    "pred": "U",
+    "evid": {}
+  },
+  "gene@-*?": {
+    "pred": "U",
+    "evid": {}
+  },
+  "gene@*?": {
+    "pred": "U",
+    "evid": {}
+  },
+  "gene@del_0.0": {
+    "pred": "U",
+    "evid": {}
+  }
+}

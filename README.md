@@ -42,6 +42,12 @@ pip install .
 
 ## Running catomatic
 
+At the most basic level, the method takes 2 input dataframes: a `samples dataframe` which contains 1 row per sample with 'R' vs 'S' binary phenotypes, and a `mutations dataframe` which contains 1 row per mutation. They have to be joinable on their `UNIQUEID` columns.
+
+If exporting to Piezo format, the `MUTATION` column must contain GARC1 grammer (ie `gene@mutation`). One must also supply a path to the `wildcards.json` file, which should contain Piezo wildcards in a json object/dictionary (example file in `/data/bdq_wildcards.json`).
+
+If seeding or updating the catalogue, the mutation grammar must match that of the `MUTATION` column.
+
 ### CLI
 
 After installation, the simplest way to run the catomatic catalogue builder is via the command line interface. ` --to_piezo` or `--to_json ` flags will need to specified to save the catalogue (with additional arguments if using --to_piezo)
@@ -54,7 +60,7 @@ or
 
 ### Python/Jupyter notebook
 
-Should you which to run catomatic in a notebook, for example, you can do so simply by calling BuildCatalogue after import.
+Should you wish to run catomatic in a notebook, for example, you can do so simply by calling BuildCatalogue after import.
 
 ```python
 from catomatic.CatalogueBuilder import BuildCatalogue
@@ -68,6 +74,8 @@ catalogue.return_catalogue()
 #return the catalogue as a piezo-structured dataframe
 catalogue.return_piezo(genbank_ref='...', catalogue_name='...', version='...', drug='...', wildcards='path/to/wildcards.json')
 ```
+
+More detailed examples on running catomatic can be found in `examples/demo.ipynb`
 
 ### CLI Parameters
 

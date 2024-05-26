@@ -11,15 +11,15 @@ from unittest.mock import patch
 # a left join of phenotypes and mutations will give:
 """   
 UNIQUEID PHENOTYPE MUTATION
-0         1         R     g@A1S
-1         2         S     g@A1S
+0         1         R     gene@A1S
+1         2         S     gene@A1S
 2         3         S      NaN
-3         4         S     g@A2S
+3         4         S     gene@A2S
 4         5         R      NaN
 5         6         S      NaN
-6         7         S     g@A3S
-7         8         S     g@A3S
-8         9         R     g@A3S
+6         7         S     gene@A3S
+7         8         S     gene@A3S
+8         9         R     gene@A3S
 9        10         R      NaN
 """
 # this should allow for pretty robust statistical condition testing
@@ -32,7 +32,14 @@ def mutation_data():
     return pd.DataFrame(
         {
             "UNIQUEID": [1, 2, 4, 7, 8, 9],
-            "MUTATION": ["g@A1S", "g@A1S", "g@A2S", "g@A3S", "g@A3S", "g@A3S"],
+            "MUTATION": [
+                "gene@A1S",
+                "gene@A1S",
+                "gene@A2S",
+                "gene@A3S",
+                "gene@A3S",
+                "gene@A3S",
+            ],
         }
     )
 
@@ -73,7 +80,7 @@ def solo_data(phenotype_data, mutation_data):
 
 @pytest.fixture
 def wildcards():
-    return {"g@-*?": {"pred": "U", "evid": {}}, "g@*=": {"pred": "S", "evid": {}}}
+    return {"gene@-*?": {"pred": "U", "evid": {}}, "gene@*=": {"pred": "S", "evid": {}}}
 
 
 @pytest.fixture
@@ -117,13 +124,13 @@ def test_add_mutation(builder):
 
 def test_build_contingency(solo_data):
     # for R + S
-    x_mut1 = BuildCatalogue.build_contingency(solo_data, "g@A1S")
+    x_mut1 = BuildCatalogue.build_contingency(solo_data, "gene@A1S")
     assert x_mut1 == [[1, 1], [3, 1]]
     # for R
-    x_mut2 = BuildCatalogue.build_contingency(solo_data, "g@A2S")
+    x_mut2 = BuildCatalogue.build_contingency(solo_data, "gene@A2S")
     assert x_mut2 == [[0, 1], [3, 1]]
     # For non-existent mutation - although should be filtered out beforehand
-    x_mut4 = BuildCatalogue.build_contingency(solo_data, "g@A4S")
+    x_mut4 = BuildCatalogue.build_contingency(solo_data, "gene@A4S")
     assert x_mut4 == [[0, 0], [3, 1]]
 
 
@@ -298,9 +305,9 @@ def test_binomial_build_S(builder):
         key: val for key, val in builder.catalogue.items() if val["pred"] == "S"
     }
     # check only mut2 and mut3 were added
-    assert "g@A1S" not in s_entries
-    assert "g@A2S" in s_entries
-    assert "g@A3S" in s_entries
+    assert "gene@A1S" not in s_entries
+    assert "gene@A2S" in s_entries
+    assert "gene@A3S" in s_entries
 
 
 @pytest.mark.parametrize(
@@ -317,21 +324,21 @@ def test_fisher_build_S(builder):
         key: val for key, val in builder.catalogue.items() if val["pred"] == "S"
     }
     # check only mut2 and mut3 were added
-    assert "g@A1S" not in s_entries
-    assert "g@A2S" in s_entries
-    assert "g@A3S" in s_entries
+    assert "gene@A1S" not in s_entries
+    assert "gene@A2S" in s_entries
+    assert "gene@A3S" in s_entries
 
 
 @pytest.mark.parametrize("builder", [{"p": 0.95}], indirect=True)
 def test_classify(builder):
     # this a bit redundant as the test_S functions above inplicity test the classify function
 
-    # check that once there is 1 susceptible entry in the catalogue (g@A1S), run_iter switches to false
+    # check that once there is 1 susceptible entry in the catalogue (gene@A1S), run_iter switches to false
     s_entries = {
         key: val for key, val in builder.catalogue.items() if val["pred"] == "S"
     }
     assert len(s_entries) == 1
-    assert "g@A2S" in s_entries.keys()
+    assert "gene@A2S" in s_entries.keys()
     assert builder.run_iter == False
 
 
@@ -339,18 +346,18 @@ def test_classify(builder):
 def test_update(builder, wildcards):
 
     # check addition to the catalogue with replacement
-    assert builder.catalogue["g@A1S"]["pred"] == None
-    builder.update({"g@A1S": "R"})
-    assert builder.catalogue["g@A1S"]["pred"] == "R"
+    assert builder.catalogue["gene@A1S"]["pred"] == None
+    builder.update({"gene@A1S": "R"})
+    assert builder.catalogue["gene@A1S"]["pred"] == "R"
     # check addition to the catalogue with wildcard and replacement
-    builder.update({"g@*?": "S"}, wildcards, replace=True)
-    assert builder.catalogue["g@*?"]["pred"] == "S"
-    assert "g@A1S" not in builder.catalogue.keys()
+    builder.update({"gene@*?": "S"}, wildcards, replace=True)
+    assert builder.catalogue["gene@*?"]["pred"] == "S"
+    assert "gene@A1S" not in builder.catalogue.keys()
     print(builder.catalogue)
     # check addition to the catalogue without replacement
-    builder.update({"g@A5S": "R"}, wildcards, replace=False)
-    assert builder.catalogue["g@A5S"]["pred"] == "R"
-    assert builder.catalogue["g@*?"]["pred"] == "S"
+    builder.update({"gene@A5S": "R"}, wildcards, replace=False)
+    assert builder.catalogue["gene@A5S"]["pred"] == "R"
+    assert builder.catalogue["gene@*?"]["pred"] == "S"
 
 
 @pytest.mark.parametrize("builder", [{"p": 0.95}], indirect=True)
@@ -365,9 +372,9 @@ def test_build_piezo(builder, wildcards):
     assert catalogue.CATALOGUE_VERSION[0] == "1"
     assert catalogue.DRUG[0] == "drug"
     # check mutations are in the catalogue, , with correct classification
-    assert catalogue[catalogue.MUTATION == "g@A2S"].PREDICTION.values[0] == "S"
+    assert catalogue[catalogue.MUTATION == "gene@A2S"].PREDICTION.values[0] == "S"
     # check wildcards are in the catalogue, with correct classification
-    assert catalogue[catalogue.MUTATION == "g@*="].PREDICTION.values[0] == "S"
+    assert catalogue[catalogue.MUTATION == "gene@*="].PREDICTION.values[0] == "S"
 
 
 def test_cli_help():
@@ -437,13 +444,12 @@ def test_to_json_output(phenotypes_file, mutations_file, output_file):
     with open(output_file, "r") as f:
         data = json.load(f)
     assert isinstance(data, dict)
-    assert "g@A1S" in data
-    assert "g@A2S" in data
-    assert "g@A3S" in data
+    assert "gene@A1S" in data
+    assert "gene@A2S" in data
+    assert "gene@A3S" in data
 
 
 def test_missing_piezo(phenotypes_file, mutations_file, output_file):
-
     result = subprocess.run(
         [
             sys.executable,
@@ -465,19 +471,22 @@ def test_missing_piezo(phenotypes_file, mutations_file, output_file):
             "test",
             "--version",
             "1",
-        ], #missing drug and wildcards
+        ],  # missing drug and wildcards
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
     )
-    assert result.returncode != 0 #error 
+    assert result.returncode != 0  # error
 
 
 def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path):
     wildcards_file = tmp_path / "wildcards.json"
     wildcards_file.write_text(
         json.dumps(
-            {"g@-*?": {"pred": "U", "evid": {}}, "g@*=": {"pred": "S", "evid": {}}}
+            {
+                "gene@-*?": {"pred": "U", "evid": {}},
+                "gene@*=": {"pred": "S", "evid": {}},
+            }
         )
     )
 
@@ -524,5 +533,5 @@ def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path)
     assert piezo_df.loc[0, "CATALOGUE_NAME"] == "test"
     assert piezo_df.loc[0, "CATALOGUE_VERSION"] == 1
     assert piezo_df.loc[0, "DRUG"] == "drug"
-    assert "g@A2S" in piezo_df["MUTATION"].values
-    assert "g@*=" in piezo_df["MUTATION"].values
+    assert "gene@A2S" in piezo_df["MUTATION"].values
+    assert "gene@*=" in piezo_df["MUTATION"].values
