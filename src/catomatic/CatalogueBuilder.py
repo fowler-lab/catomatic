@@ -515,9 +515,6 @@ class BuildCatalogue:
 
         """
 
-        with open(wildcards) as w:
-            wildcards = json.load(w)
-
         piezo_df = self.build_piezo(
             genbank_ref,
             catalogue_name,
