@@ -193,7 +193,7 @@ class BuildCatalogue:
 
         else:
             # not phenotyping, just adding to catalogue
-            self.add_mutation(mutation, None, data)
+            self.add_mutation(mutation, "U", data)
 
     def binomial_build(self, mutation, x):
         """
@@ -496,6 +496,7 @@ class BuildCatalogue:
         grammar="GARC1",
         values="RUS",
         public=True,
+        for_piezo=True,
     ):
         """
         Exports a pizeo-compatible dataframe as a csv file.
@@ -510,6 +511,8 @@ class BuildCatalogue:
             grammar (str, optional): Grammar used in the catalogue, default "GARC1" (no other grammar currently supported).
             values (str, optional): Prediction values, default "RUS" representing each phenotype (no other values currently supported).
             public (bool, optional): private or public call
+            for_piezo (bool, optional): Whether to include the missing phenotype placeholders (only piezo requires them)
+
         """
 
         with open(wildcards) as w:
@@ -524,6 +527,7 @@ class BuildCatalogue:
             grammar,
             values,
             public,
+            for_piezo,
         )
         piezo_df.to_csv(outfile)
 
@@ -537,6 +541,7 @@ class BuildCatalogue:
         grammar="GARC1",
         values="RUS",
         public=True,
+        for_piezo=True,
     ):
         """
         Builds a piezo-format catalogue df from the catalogue object.
@@ -550,6 +555,7 @@ class BuildCatalogue:
             grammar (str, optional): Grammar used in the catalogue, default "GARC1" (no other grammar currently supported).
             values (str, optional): Prediction values, default "RUS" representing each phenotype (no other values currently supported).
             public (bool, optional): private or public call
+            for_piezo (bool, optional): Whether to include the missing phenotype placeholders (only piezo requires them)
 
         Returns:
             self: instance with piezo_catalogue set
@@ -562,6 +568,14 @@ class BuildCatalogue:
                 with open(wildcards) as f:
                     wildcards = json.load(f)
             [self.add_mutation(k, v["pred"], v["evid"]) for k, v in wildcards.items()]
+            # inlcude a placeholder for each phenotype if don't exist - piezo requires R, U, S to parse
+            if for_piezo:
+                if not any(v["pred"] == "R" for v in self.catalogue.values()):
+                    self.add_mutation("placeholder@R1R", "R", {})
+                if not any(v["pred"] == "S" for v in self.catalogue.values()):
+                    self.add_mutation("placeholder@S1S", "S", {})
+                if not any(v["pred"] == "U" for v in self.catalogue.values()):
+                    self.add_mutation("placeholder@U1U", "U", {})
             data = self.catalogue
         else:
             # if internal:
@@ -695,6 +709,11 @@ class BuildCatalogue:
             default="RUS",
             help="Values used for predictions in the catalogue.",
         )
+        parser.add_argument(
+            "--for_piezo",
+            action="store_true",
+            help="If not planning to use piezo, set to False to avoid placeholder rows being added",
+        )
         return parser.parse_args()
 
 
@@ -739,6 +758,7 @@ def main():
             outfile=args.outfile,
             grammar=args.grammar,
             values=args.values,
+            for_piezo=args.for_piezo
         )
 
 

@@ -1,0 +1,7 @@
+GENBANK_REFERENCE,CATALOGUE_NAME,CATALOGUE_VERSION,CATALOGUE_GRAMMAR,PREDICTION_VALUES,DRUG,MUTATION,PREDICTION,SOURCE,EVIDENCE,OTHER
+,,,GARC1,RUS,temp,gene@*=,S,{},{},{}
+,,,GARC1,RUS,temp,gene@-*_indel,U,{},{},{}
+,,,GARC1,RUS,temp,gene@*_indel,U,{},{},{}
+,,,GARC1,RUS,temp,gene@-*?,U,{},{},{}
+,,,GARC1,RUS,temp,gene@*?,R,{},{},{}
+,,,GARC1,RUS,temp,gene@del_0.0,U,{},{},{}
