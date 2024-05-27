@@ -188,7 +188,7 @@ def test_skeleton_build(builder):
     # check its actually been added
     assert mutation in builder.catalogue
     # check if the correct phenotype has been added
-    assert builder.catalogue[mutation]["pred"] == None
+    assert builder.catalogue[mutation]["pred"] == 'U'
 
     expected_e = {
         "proportion": builder.calc_proportion(x),
@@ -346,7 +346,7 @@ def test_classify(builder):
 def test_update(builder, wildcards):
 
     # check addition to the catalogue with replacement
-    assert builder.catalogue["gene@A1S"]["pred"] == None
+    assert builder.catalogue["gene@A1S"]["pred"] == 'U'
     builder.update({"gene@A1S": "R"})
     assert builder.catalogue["gene@A1S"]["pred"] == "R"
     # check addition to the catalogue with wildcard and replacement
