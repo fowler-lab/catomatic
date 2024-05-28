@@ -1,26 +1,26 @@
 {
   "gene@*=": {
     "pred": "S",
-    "evid": {}
+    "evid": { "default_rule": "True" }
   },
   "gene@-*_indel": {
     "pred": "U",
-    "evid": {}
+    "evid": { "default_rule": "True" }
   },
   "gene@*_indel": {
     "pred": "U",
-    "evid": {}
+    "evid": { "default_rule": "True" }
   },
   "gene@-*?": {
     "pred": "U",
-    "evid": {}
+    "evid": { "default_rule": "True" }
   },
   "gene@*?": {
     "pred": "U",
-    "evid": {}
+    "evid": { "default_rule": "True" }
   },
   "gene@del_0.0": {
     "pred": "U",
-    "evid": {}
+    "evid": { "default_rule": "True" }
   }
 }
