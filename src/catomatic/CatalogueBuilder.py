@@ -83,7 +83,7 @@ class BuildCatalogue:
             ), "The 'seed' parameter must be a list of neutral (susceptible) mutations."
             # if there are seed variants, hardcode them now
             for i in seed:
-                self.add_mutation(i, "S", "seeded")
+                self.add_mutation(i, "S", {"seeded":"True"})
 
         if test is not None:
             assert test in [
@@ -617,9 +617,15 @@ class BuildCatalogue:
         )
 
         if public:
-            # Sort the catalogue by the order in which mutations were added
-            piezo_catalogue.set_index("MUTATION", inplace=True)
-            piezo_catalogue = piezo_catalogue.reindex(self.entry).reset_index()
+            # Create a temporary column for the order in self.entry
+            piezo_catalogue["order"] = piezo_catalogue["MUTATION"].apply(lambda x: self.entry.index(x))
+
+            # Sort by PREDICTION and the temporary order column
+            piezo_catalogue["PREDICTION"] = pd.Categorical(piezo_catalogue["PREDICTION"], categories=["S", "R", "U"], ordered=True)
+            piezo_catalogue = piezo_catalogue.sort_values(by=["PREDICTION", "order"])
+
+            # Drop the temporary order column
+            piezo_catalogue = piezo_catalogue.drop(columns=["order"])
             piezo_catalogue = piezo_catalogue[columns]
 
         return piezo_catalogue
