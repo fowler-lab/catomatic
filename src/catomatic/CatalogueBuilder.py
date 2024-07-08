@@ -36,10 +36,12 @@ class BuildCatalogue:
 
         p (float, optional): Significance level at which to reject the null hypothesis during statistical testing.
                              Defaults to 0.95.
-
+        tails (str, optional): Whether to run a 1-tailed or 2-tailed test. Defaults to 'two'.
         strict_unlock (bool, optional): If strict_unlock is true,  statistical significance in the direction of
                                         susceptiblity will be required for S classifications. If false, homogenous
                                         susceptiblity is sufficient for S classifcations. Defaults to False
+        record_ids (bool, optional): If true, will track identifiers to which the mutations belong and were extracted
+                                        from - helpful for detailed interrogation. Defaults to False
 
     """
 
@@ -52,7 +54,9 @@ class BuildCatalogue:
         test=None,
         background=None,
         p=0.95,
+        tails="two",
         strict_unlock=False,
+        record_ids=False,
     ):
 
         samples = pd.read_csv(samples) if isinstance(samples, str) else samples
@@ -76,6 +80,10 @@ class BuildCatalogue:
         self.catalogue = {}
         # track order of addition to catalogue
         self.entry = []
+        # whether to record sample ids for each mutation
+        self.record_ids = record_ids
+        # temporarily record the ids
+        self.temp_ids = []
 
         if seed is not None:
             assert isinstance(
@@ -83,7 +91,7 @@ class BuildCatalogue:
             ), "The 'seed' parameter must be a list of neutral (susceptible) mutations."
             # if there are seed variants, hardcode them now
             for i in seed:
-                self.add_mutation(i, "S", {"seeded":"True"})
+                self.add_mutation(i, "S", {"seeded": "True"})
 
         if test is not None:
             assert test in [
@@ -102,10 +110,12 @@ class BuildCatalogue:
             assert isinstance(
                 strict_unlock, bool
             ), "strict_unlock parameter must be of type bool."
+            assert tails in ["two", "one"], "tails must either be 'one' or 'two"
 
         self.test = test
         self.p = 1 - p
         self.strict_unlock = strict_unlock
+        self.tails = tails
 
         # flag controls iterative classifications of susceptible variants vs final ressitance sweep
         self.run_iter = True
@@ -152,7 +162,9 @@ class BuildCatalogue:
         # for each non-synonymous mutation type
         for mut in solos[(~solos.MUTATION.isna())].MUTATION.unique():
             # build a contingency table
-            x = self.build_contingency(solos, mut)
+            x, ids = self.build_contingency(solos, mut)
+            # temporarily store mutation groups:
+            self.temp_ids = ids
             # classify susceptible variants according to specified test mode
             if self.test is None:
                 self.skeleton_build(mut, x)
@@ -214,7 +226,11 @@ class BuildCatalogue:
         # large confidence intervals.
         hits = x[0][0]
         n = x[0][0] + x[0][1]
-        p_calc = binomtest(hits, n, self.background, alternative="two-sided").pvalue
+
+        if self.tails == "one":
+            p_calc = binomtest(hits, n, self.background, alternative="greater").pvalue
+        else:
+            p_calc = binomtest(hits, n, self.background, alternative="two-sided").pvalue
 
         data = (
             {
@@ -227,26 +243,40 @@ class BuildCatalogue:
 
         if self.run_iter:
             # Check for iterative classification of S variants
-            if proportion == 0:
-                if not self.strict_unlock:
-                    # Classify S when  no evidence of resistance and homogeneous S classifications are allowed
-                    self.add_mutation(mutation, "S", data)
+            if self.tails == "two":
+                # if two-tailed
+                if proportion == 0:
+                    if not self.strict_unlock:
+                        # Classify S when  no evidence of resistance and homogeneous S classifications are allowed
+                        self.add_mutation(mutation, "S", data)
+                    elif p_calc < self.p:
+                        # Classify as susceptible if statistically S (stricter)
+                        if proportion <= self.background:
+                            self.add_mutation(mutation, "S", data)
                 elif p_calc < self.p:
-                    # Classify as susceptible if statistically S (stricter)
+                    # Classify as susceptible based on active evaluation and background proportion
                     if proportion <= self.background:
                         self.add_mutation(mutation, "S", data)
-            elif p_calc < self.p:
-                # Classify as susceptible based on active evaluation and background proportion
-                if proportion <= self.background:
+            else:
+                # if one-tailed
+                if p_calc >= self.p:
+                    # Classify susceptible if no evidence of resistance
                     self.add_mutation(mutation, "S", data)
         else:
-            if p_calc < self.p:
-                # if R, classify resistant
-                if proportion > self.background:
-                    self.add_mutation(mutation, "R", data)
+            if self.tails == "two":
+                # if two-tailed
+                if p_calc < self.p:
+                    # if R, classify resistant
+                    if proportion > self.background:
+                        self.add_mutation(mutation, "R", data)
+                else:
+                    # if no difference, classify U
+                    self.add_mutation(mutation, "U", data)
             else:
-                # if no difference, classify U
-                self.add_mutation(mutation, "U", data)
+                # if one-tailed
+                if p_calc < self.p:
+                    # Classify resistance if evidence of resistance
+                    self.add_mutation(mutation, "R", data)
 
     def fishers_build(self, mutation, x):
         """
@@ -263,7 +293,10 @@ class BuildCatalogue:
         proportion = self.calc_proportion(x)
         ci = self.calc_confidenceInterval(x)
 
-        _, p_calc = fisher_exact(x)
+        if self.tails == "one":
+            _, p_calc = fisher_exact(x, alternative="greater")
+        else:
+            _, p_calc = fisher_exact(x)
 
         data = (
             {
@@ -276,33 +309,47 @@ class BuildCatalogue:
 
         if self.run_iter:
             # if iteratively classifing S variants
-            if proportion == 0:
-                if not self.strict_unlock:
-                    # Classify S when  no evidence of resistance and homogeneous S classifications are allowed
-                    self.add_mutation(mutation, "S", data)
+            if self.tails == "two":
+                # if two-tailed
+                if proportion == 0:
+                    if not self.strict_unlock:
+                        # Classify S when  no evidence of resistance and homogeneous S classifications are allowed
+                        self.add_mutation(mutation, "S", data)
+                    elif p_calc < self.p:
+                        # if difference and statisitcal significance required for S classiication
+                        odds = self.calc_oddsRatio(x)
+                        # if S, call susceptible
+                        if odds <= 1:
+                            self.add_mutation(mutation, "S", data)
                 elif p_calc < self.p:
-                    # if difference and statisitcal significance required for S classiication
+                    # if different from background, calculate OR to determine direction
                     odds = self.calc_oddsRatio(x)
                     # if S, call susceptible
                     if odds <= 1:
                         self.add_mutation(mutation, "S", data)
-            elif p_calc < self.p:
-                # if different from background, calculate OR to determine direction
-                odds = self.calc_oddsRatio(x)
-                # if S, call susceptible
-                if odds <= 1:
-                    self.add_mutation(mutation, "S", data)
-        else:
-            # if statistically signficant from background
-            if p_calc < self.p:
-                # calculate OR to determine direction
-                odds = self.calc_oddsRatio(x)
-                # if R, call resistant
-                if odds > 1:
-                    self.add_mutation(mutation, "R", data)
-            # if no difference, call U
             else:
-                self.add_mutation(mutation, "U", data)
+                # if one-tailed
+                if p_calc >= self.p:
+                    # Classify susceptible if no evidence of resistance
+                    self.add_mutation(mutation, "S", data)
+
+        else:
+            if self.tails == "two":
+                # if two-sided
+                if p_calc < self.p:
+                    # calculate OR to determine direction
+                    odds = self.calc_oddsRatio(x)
+                    # if R, call resistant
+                    if odds > 1:
+                        self.add_mutation(mutation, "R", data)
+                # if no difference, call U
+                else:
+                    self.add_mutation(mutation, "U", data)
+            else:
+                # if one-sided
+                if p_calc < self.p:
+                    # if there is evidence of resistance
+                    self.add_mutation(mutation, "R", data)
 
     def add_mutation(self, mutation, prediction, evidence):
         """
@@ -313,6 +360,9 @@ class BuildCatalogue:
             prediction (str): phenotype of mutation
             evidence (any): additional metadata to be added
         """
+        # add ids to catalogue if specified
+        if self.record_ids and "seeded" not in evidence:
+            evidence[0]["ids"] = self.temp_ids
 
         self.catalogue[mutation] = {"pred": prediction, "evid": evidence}
         # record entry once mutation is added
@@ -363,7 +413,9 @@ class BuildCatalogue:
         R_count_no_mut = len(solos[(solos.MUTATION.isna()) & (solos.PHENOTYPE == "R")])
         S_count_no_mut = len(solos[(solos.MUTATION.isna()) & (solos.PHENOTYPE == "S")])
 
-        return [[R_count, S_count], [R_count_no_mut, S_count_no_mut]]
+        ids = solos[solos.MUTATION == mut]["UNIQUEID"].tolist()
+
+        return [[R_count, S_count], [R_count_no_mut, S_count_no_mut]], ids
 
     @staticmethod
     def calc_oddsRatio(x):
@@ -618,10 +670,14 @@ class BuildCatalogue:
 
         if public:
             # Create a temporary column for the order in self.entry
-            piezo_catalogue["order"] = piezo_catalogue["MUTATION"].apply(lambda x: self.entry.index(x))
+            piezo_catalogue["order"] = piezo_catalogue["MUTATION"].apply(
+                lambda x: self.entry.index(x)
+            )
 
             # Sort by PREDICTION and the temporary order column
-            piezo_catalogue["PREDICTION"] = pd.Categorical(piezo_catalogue["PREDICTION"], categories=["S", "R", "U"], ordered=True)
+            piezo_catalogue["PREDICTION"] = pd.Categorical(
+                piezo_catalogue["PREDICTION"], categories=["S", "R", "U"], ordered=True
+            )
             piezo_catalogue = piezo_catalogue.sort_values(by=["PREDICTION", "order"])
 
             # Drop the temporary order column
@@ -761,7 +817,7 @@ def main():
             outfile=args.outfile,
             grammar=args.grammar,
             values=args.values,
-            for_piezo=args.for_piezo
+            for_piezo=args.for_piezo,
         )
 
 

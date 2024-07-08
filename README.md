@@ -72,7 +72,7 @@ catalogue = BuildCatalogue(samples = samples_df, mutations = mutations_df)
 catalogue.return_catalogue()
 
 #return the catalogue as a piezo-structured dataframe
-catalogue.return_piezo(genbank_ref='...', catalogue_name='...', version='...', drug='...', wildcards='path/to/wildcards.json')
+catalogue.build_piezo(genbank_ref='...', catalogue_name='...', version='...', drug='...', wildcards='path/to/wildcards.json')
 ```
 
 More detailed examples on running catomatic can be found in `examples/demo.ipynb`
