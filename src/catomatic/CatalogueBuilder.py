@@ -500,9 +500,11 @@ class BuildCatalogue:
                 target_vars = {
                     k: v["evid"]
                     for k, v in self.catalogue.items()
-                    if (predict := piezo_rule.predict(k)) == "R"
-                    or (isinstance(predict, dict) and predict.get("temp") == "R")
-                }
+                    if (('default_rule' not in v['evid'])and (len(v['evid'])!=0)) and (
+                        (predict := piezo_rule.predict(k)) == "R"
+                        or (isinstance(predict, dict) and predict.get("temp") == "R")
+                    )
+                }                    
                 # remove those to be replaced
                 for k in target_vars.keys():
                     if k in self.entry:
@@ -549,6 +551,7 @@ class BuildCatalogue:
         values="RUS",
         public=True,
         for_piezo=True,
+        include_U=True,
     ):
         """
         Exports a pizeo-compatible dataframe as a csv file.
@@ -577,6 +580,7 @@ class BuildCatalogue:
             values,
             public,
             for_piezo,
+            include_U,
         )
         piezo_df.to_csv(outfile)
 
@@ -591,6 +595,7 @@ class BuildCatalogue:
         values="RUS",
         public=True,
         for_piezo=True,
+        include_U=True,
     ):
         """
         Builds a piezo-format catalogue df from the catalogue object.
@@ -623,9 +628,21 @@ class BuildCatalogue:
                     self.add_mutation("placeholder@R1R", "R", {})
                 if not any(v["pred"] == "S" for v in self.catalogue.values()):
                     self.add_mutation("placeholder@S1S", "S", {})
-                if not any(v["pred"] == "U" for v in self.catalogue.values()):
+                if (
+                    not any(v["pred"] == "U" for v in self.catalogue.values())
+                    or not include_U
+                ):
                     self.add_mutation("placeholder@U1U", "U", {})
             data = self.catalogue
+            if include_U == False:
+                data = {
+                    k: v
+                    for k, v in data.items()
+                    if (v["pred"] != "U")
+                    or (k == "placeholder@U1U")
+                    or ("*" in k)
+                    or ("del_0.0" in k)
+                }
         else:
             # if internal:
             data = wildcards
