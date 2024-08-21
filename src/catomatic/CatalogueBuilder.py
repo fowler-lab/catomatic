@@ -504,7 +504,9 @@ class BuildCatalogue:
                         (predict := piezo_rule.predict(k)) == "R"
                         or (isinstance(predict, dict) and predict.get("temp") == "R")
                     )
-                }                    
+                }
+                print (self.catalogue)
+                print (target_vars)                    
                 # remove those to be replaced
                 for k in target_vars.keys():
                     if k in self.entry:

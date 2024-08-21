@@ -124,13 +124,13 @@ def test_add_mutation(builder):
 
 def test_build_contingency(solo_data):
     # for R + S
-    x_mut1 = BuildCatalogue.build_contingency(solo_data, "gene@A1S")
+    x_mut1 = BuildCatalogue.build_contingency(solo_data, "gene@A1S")[0]
     assert x_mut1 == [[1, 1], [3, 1]]
     # for R
-    x_mut2 = BuildCatalogue.build_contingency(solo_data, "gene@A2S")
+    x_mut2 = BuildCatalogue.build_contingency(solo_data, "gene@A2S")[0]
     assert x_mut2 == [[0, 1], [3, 1]]
     # For non-existent mutation - although should be filtered out beforehand
-    x_mut4 = BuildCatalogue.build_contingency(solo_data, "gene@A4S")
+    x_mut4 = BuildCatalogue.build_contingency(solo_data, "gene@A4S")[0]
     assert x_mut4 == [[0, 0], [3, 1]]
 
 
@@ -352,7 +352,7 @@ def test_update(builder, wildcards):
     # check addition to the catalogue with wildcard and replacement
     builder.update({"gene@*?": "S"}, wildcards, replace=True)
     assert builder.catalogue["gene@*?"]["pred"] == "S"
-    assert "gene@A1S" not in builder.catalogue.keys()
+    assert "gene@A2S" not in builder.catalogue.keys()
     print(builder.catalogue)
     # check addition to the catalogue without replacement
     builder.update({"gene@A5S": "R"}, wildcards, replace=False)
