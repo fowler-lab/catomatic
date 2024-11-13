@@ -17,7 +17,7 @@ jobs:
 
       - name: Download custom package
         run: |
-          wget https://github.com/DylanAdlard/your-repo/releases/download/alpha/intreg-0.1.tar.gz
+          wget https://github.com/fowler-lab/intreg/releases/download/alpha/intreg-0.1.tar.gz
 
       - name: Create Conda environment
         run: conda env create --file env.yml
