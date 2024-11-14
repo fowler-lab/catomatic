@@ -1,4 +1,4 @@
-[![codecov](https://codecov.io/gh/fowler-lab/catomatic/branch/main/graph/badge.svg?token=8fnOy6rHCd)](https://codecov.io/gh/fowler-lab/catomatic)
+[![codecov](https://codecov.io/gh/fowler-lab/catomatic/branch/ecoff/graph/badge.svg?token=8fnOy6rHCd)](https://codecov.io/gh/fowler-lab/catomatic)
 
 # catomatic
 
