@@ -118,9 +118,9 @@ class GenerateEcoff:
             OptimizeResult: The result of the optimization containing fitted parameters.
         """
         # Filter out mutant samples
-        wt_df = self.df[self.df.MUTANT == False]
+        self.wt_df = self.df[self.df.MUTANT == False]
         # Define and log-transform intervals
-        y_low, y_high = self.define_intervals(wt_df)
+        y_low, y_high = self.define_intervals(self.wt_df)
         # Fit the model with log-transformed data
         return IntReg(y_low, y_high).fit(method="L-BFGS-B", initial_params=None)
 
