@@ -15,13 +15,18 @@ jobs:
         with:
           auto-activate-base: false
 
+      - name: Download custom package
+        run: |
+          wget https://github.com/fowler-lab/intreg/releases/download/alpha/intreg-0.1.tar.gz
+
       - name: Create Conda environment
         run: conda env create --file env.yml
 
-      - name: Activate Conda environment and install catomatic
+      - name: Activate Conda environment and install dependencies
         run: |
           source $CONDA/bin/activate catomatic
           pip install -e .
+          pip install ./intreg-0.1.tar.gz
 
       - name: Verify Conda environment
         run: |

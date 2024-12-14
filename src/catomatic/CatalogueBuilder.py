@@ -30,7 +30,7 @@ class BuildCatalogue:
 
         test (str, optional): Type of statistical test to run for phenotyping. None (doesn't phenotype)
                                 vs binomial (against a defined background) vs Fisher (against contingency
-                                background) Defaults to none.
+                                background). Defaults to none.
 
         background (float, optional): Background rate between 0-1 for binomial test phenotyping. Deafults to None.
 
@@ -41,7 +41,8 @@ class BuildCatalogue:
                                         susceptiblity will be required for S classifications. If false, homogenous
                                         susceptiblity is sufficient for S classifcations. Defaults to False
         record_ids (bool, optional): If true, will track identifiers to which the mutations belong and were extracted
-                                        from - helpful for detailed interrogation. Defaults to False
+                                        from - helpful for detailed interrogation, but gives long evidence objects.
+                                        Defaults to False
 
     """
 
@@ -190,13 +191,7 @@ class BuildCatalogue:
         proportion = self.calc_proportion(x)
         ci = self.calc_confidenceInterval(x)
 
-        data = (
-            {
-                "proportion": proportion,
-                "confidence": ci,
-                "contingency": x,
-            },
-        )
+        data = {"proportion": proportion, "confidence": ci, "contingency": x}
 
         if self.run_iter:
             # if iteratively classifing S variants
@@ -232,14 +227,13 @@ class BuildCatalogue:
         else:
             p_calc = binomtest(hits, n, self.background, alternative="two-sided").pvalue
 
-        data = (
-            {
+        data = {
                 "proportion": proportion,
                 "confidence": ci,
                 "p_value": p_calc,
-                "contingency": x,
-            },
-        )
+                "contingency": x
+            }
+        
 
         if self.run_iter:
             # Check for iterative classification of S variants
@@ -298,14 +292,12 @@ class BuildCatalogue:
         else:
             _, p_calc = fisher_exact(x)
 
-        data = (
-            {
-                "proportion": proportion,
-                "confidence": ci,
-                "p_value": p_calc,
-                "contingency": x,
-            },
-        )
+        data = {
+            "proportion": proportion,
+            "confidence": ci,
+            "p_value": p_calc,
+            "contingency": x,
+        }
 
         if self.run_iter:
             # if iteratively classifing S variants
@@ -362,7 +354,7 @@ class BuildCatalogue:
         """
         # add ids to catalogue if specified
         if self.record_ids and "seeded" not in evidence:
-            evidence[0]["ids"] = self.temp_ids
+            evidence["ids"] = self.temp_ids
 
         self.catalogue[mutation] = {"pred": prediction, "evid": evidence}
         # record entry once mutation is added
@@ -493,6 +485,7 @@ class BuildCatalogue:
                     "temp",
                     wildcards,
                     public=False,
+                    json_dumps=True
                 ).to_csv("./temp/rule.csv", index=False)
                 # read rule back in with piezo
                 piezo_rule = piezo.ResistanceCatalogue("./temp/rule.csv")
@@ -500,13 +493,12 @@ class BuildCatalogue:
                 target_vars = {
                     k: v["evid"]
                     for k, v in self.catalogue.items()
-                    if (('default_rule' not in v['evid'])and (len(v['evid'])!=0)) and (
+                    if (("default_rule" not in v["evid"]) and (len(v["evid"]) != 0))
+                    and (
                         (predict := piezo_rule.predict(k)) == "R"
                         or (isinstance(predict, dict) and predict.get("temp") == "R")
                     )
                 }
-                print (self.catalogue)
-                print (target_vars)                    
                 # remove those to be replaced
                 for k in target_vars.keys():
                     if k in self.entry:
@@ -553,6 +545,7 @@ class BuildCatalogue:
         values="RUS",
         public=True,
         for_piezo=True,
+        json_dumps=True,
         include_U=True,
     ):
         """
@@ -582,6 +575,7 @@ class BuildCatalogue:
             values,
             public,
             for_piezo,
+            json_dumps,
             include_U,
         )
         piezo_df.to_csv(outfile)
@@ -597,6 +591,7 @@ class BuildCatalogue:
         values="RUS",
         public=True,
         for_piezo=True,
+        json_dumps=False,
         include_U=True,
     ):
         """
@@ -612,6 +607,8 @@ class BuildCatalogue:
             values (str, optional): Prediction values, default "RUS" representing each phenotype (no other values currently supported).
             public (bool, optional): private or public call
             for_piezo (bool, optional): Whether to include the missing phenotype placeholders (only piezo requires them)
+            json_dumps (bool, optional): Whether to dump evidence column into json object for piezo (e.g if in notebook, unnecessary)
+            include_U (bool, optional): Whether to add unclassified mutations to catalogue
 
         Returns:
             self: instance with piezo_catalogue set
@@ -662,7 +659,6 @@ class BuildCatalogue:
             "EVIDENCE",
             "OTHER",
         ]
-
         # construct the catalogue dataframe in piezo-standardised format
         piezo_catalogue = (
             pd.DataFrame.from_dict(data, orient="index")
@@ -681,9 +677,11 @@ class BuildCatalogue:
                 CATALOGUE_GRAMMAR=grammar,
                 PREDICTION_VALUES=values,
                 DRUG=drug,
-                SOURCE=json.dumps({}),
-                EVIDENCE=lambda df: df["EVIDENCE"].apply(json.dumps),
-                OTHER=json.dumps({}),
+                SOURCE=json.dumps({}) if json_dumps else {},
+                EVIDENCE=lambda df: df["EVIDENCE"].apply(
+                    json.dumps if json_dumps else lambda x: x
+                ),
+                OTHER=json.dumps({}) if json_dumps else {},
             )[columns]
         )
 

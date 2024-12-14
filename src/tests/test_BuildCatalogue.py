@@ -196,7 +196,7 @@ def test_skeleton_build(builder):
         "contingency": x,
     }
 
-    assert builder.catalogue[mutation]["evid"][0] == expected_e
+    assert builder.catalogue[mutation]["evid"] == expected_e
 
 
 @pytest.mark.parametrize(
@@ -239,7 +239,7 @@ def test_binomial_build_RU(builder):
         ), f"Failed for contingency {x}"
         # make sure evidence was added correclty
         assert (
-            builder.catalogue[mutation]["evid"][0] == expected_e
+            builder.catalogue[mutation]["evid"] == expected_e
         ), f"Failed for contingency {x}"
 
         # fyi haven't tested entire decision tree for run_iter=True, but they're are almost identical
@@ -283,7 +283,7 @@ def test_fisher_build_RU(builder):
         ), f"Failed for contingency {x}"
         # make sure evidence was added correclty
         assert (
-            builder.catalogue[mutation]["evid"][0] == expected_e
+            builder.catalogue[mutation]["evid"] == expected_e
         ), f"Failed for contingency {x}"
 
 
