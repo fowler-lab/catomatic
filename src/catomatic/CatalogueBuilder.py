@@ -4,6 +4,7 @@ import piezo
 import argparse
 import numpy as np
 import pandas as pd
+from .defence import validate_binary_build_inputs, validate_build_piezo_inputs
 from scipy.stats import norm, binomtest, fisher_exact
 
 
@@ -59,73 +60,40 @@ class BuildCatalogue:
         strict_unlock=False,
         record_ids=False,
     ):
-
         samples = pd.read_csv(samples) if isinstance(samples, str) else samples
         mutations = pd.read_csv(mutations) if isinstance(mutations, str) else mutations
 
-        assert all(
-            column in samples.columns for column in ["UNIQUEID", "PHENOTYPE"]
-        ), "Input df must contain columns UNIQUEID and PHENOTYPE"
-        assert all(
-            column in mutations.columns for column in ["UNIQUEID", "MUTATION"]
-        ), "Input df must contain columns UNIQUEID and MUTATION"
+        # Run the validation function
+        validate_binary_build_inputs(
+            samples, mutations, seed, FRS, test, background, p, tails, record_ids
+        )
 
         if FRS:
-            assert (
-                "FRS" in mutations.columns
-            ), 'The mutations df must contain an "FRS" column to filter by FRS'
-            # apply fraction read support threhsolds to mutations to filter out irrelevant variants
+            # Apply fraction read support thresholds to mutations to filter out irrelevant variants
             mutations = mutations[(mutations.FRS >= FRS)]
 
-        # instantiate an empty catalogue object
+        # Instantiate attributes
         self.catalogue = {}
-        # track order of addition to catalogue
         self.entry = []
-        # whether to record sample ids for each mutation
         self.record_ids = record_ids
-        # temporarily record the ids
         self.temp_ids = []
-
-        if seed is not None:
-            assert isinstance(
-                seed, list
-            ), "The 'seed' parameter must be a list of neutral (susceptible) mutations."
-            # if there are seed variants, hardcode them now
-            for i in seed:
-                self.add_mutation(i, "S", {"seeded": "True"})
-
-        if test is not None:
-            assert test in [
-                None,
-                "Binomial",
-                "Fisher",
-            ], "the test must be None, Binomial or Fisher"
-            if test == "Binomial":
-                assert (
-                    background is not None
-                ), "If using a binomial test, an assumed background resistance rate (0-1) must be specified"
-                assert p < 1, "the p value for statistical testing must be 0 < p < 1"
-                self.background = background
-            elif test == "Fisher":
-                assert p < 1, "the p value for statistical testing must be 0 < p < 1"
-            assert isinstance(
-                strict_unlock, bool
-            ), "strict_unlock parameter must be of type bool."
-            assert tails in ["two", "one"], "tails must either be 'one' or 'two"
-
         self.test = test
+        self.background = background
         self.p = 1 - p
         self.strict_unlock = strict_unlock
         self.tails = tails
-
-        # flag controls iterative classifications of susceptible variants vs final ressitance sweep
         self.run_iter = True
 
+        if seed is not None:
+            # If there are seeded variants, hardcode them now
+            for i in seed:
+                self.add_mutation(i, "S", {"seeded": "True"})
+
         while self.run_iter:
-            # while there are susceptible solos, classify and remove them
+            # While there are susceptible solos, classify and remove them
             self.classify(samples, mutations)
 
-        # if no more susceptible solos, classify all R and U solos in one, final sweep
+        # If no more susceptible solos, classify all R and U solos in one, final sweep
         self.classify(samples, mutations)
 
     def classify(self, samples, mutations):
@@ -228,12 +196,11 @@ class BuildCatalogue:
             p_calc = binomtest(hits, n, self.background, alternative="two-sided").pvalue
 
         data = {
-                "proportion": proportion,
-                "confidence": ci,
-                "p_value": p_calc,
-                "contingency": x
-            }
-        
+            "proportion": proportion,
+            "confidence": ci,
+            "p_value": p_calc,
+            "contingency": x,
+        }
 
         if self.run_iter:
             # Check for iterative classification of S variants
@@ -479,13 +446,7 @@ class BuildCatalogue:
                         wildcards = json.load(f)
                 wildcards[rule] = {"pred": "R", "evid": {}}
                 self.build_piezo(
-                    "",
-                    "",
-                    "",
-                    "temp",
-                    wildcards,
-                    public=False,
-                    json_dumps=True
+                    "", "", "", "temp", wildcards, public=False, json_dumps=True
                 ).to_csv("./temp/rule.csv", index=False)
                 # read rule back in with piezo
                 piezo_rule = piezo.ResistanceCatalogue("./temp/rule.csv")
@@ -613,6 +574,12 @@ class BuildCatalogue:
         Returns:
             self: instance with piezo_catalogue set
         """
+
+        validate_build_piezo_inputs(
+            genbank_ref, catalogue_name, version, drug,
+            wildcards, grammar, values, public, for_piezo, json_dumps, include_U
+        )
+
         # if user-called
         if public:
             # add piezo wildcards to the catalogue
@@ -621,7 +588,7 @@ class BuildCatalogue:
                 with open(wildcards) as f:
                     wildcards = json.load(f)
             [self.add_mutation(k, v["pred"], v["evid"]) for k, v in wildcards.items()]
-            # inlcude a placeholder for each phenotype if don't exist - piezo requires R, U, S to parse
+            # inlcude a placeholder for each phenotype if don't exist - piezo requires all R, U, S to parse
             if for_piezo:
                 if not any(v["pred"] == "R" for v in self.catalogue.values()):
                     self.add_mutation("placeholder@R1R", "R", {})
@@ -748,6 +715,11 @@ class BuildCatalogue:
             help="Enforce strict unlocking for classifications.",
         )
         parser.add_argument(
+            "--record_ids",
+            action="store_true",
+            help="Whether to record UNIQUEIDS in the catalogue"
+        )
+        parser.add_argument(
             "--to_json",
             action="store_true",
             help="Flag to trigger exporting the catalogue to JSON format.",
@@ -804,6 +776,7 @@ def main():
         background=args.background,
         p=args.p,
         strict_unlock=args.strict_unlock,
+        record_ids=args.record_ids
     )
 
     if args.to_json:

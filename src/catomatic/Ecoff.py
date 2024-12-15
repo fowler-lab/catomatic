@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 from intreg.intreg import IntReg
+from .defence import validate_ecoff_inputs
+
 
 
 class GenerateEcoff:
@@ -19,21 +21,12 @@ class GenerateEcoff:
             censored (bool): Flag to indicate if censored data is used.
             tail_dilutions (int): Number of dilutions to extend for interval tails if uncensored.
         """
-        # Validate required columns
-        assert all(column in samples.columns for column in ["UNIQUEID", "MIC"]), \
-            "Input samples must contain columns 'UNIQUEID' and 'MIC'"
-        assert all(column in mutations.columns for column in ["UNIQUEID", "MUTATION"]), \
-            "Input mutations must contain columns 'UNIQUEID' and 'MUTATION'"
+        # Run input validation
+        validate_ecoff_inputs(samples, mutations, dilution_factor, censored, tail_dilutions)
 
         # Merge data and flag mutants
         self.df = pd.merge(samples, mutations, how="left", on=["UNIQUEID"])
         self.flag_mutants()
-
-        # Validate inputs
-        assert isinstance(censored, bool), "censored requires a True/False value"
-        if not censored:
-            assert isinstance(tail_dilutions, int), \
-                "Must supply number of assumed dilutions in lower and upper interval tails when uncensored"
 
         # Set parameters
         self.dilution_factor = dilution_factor
