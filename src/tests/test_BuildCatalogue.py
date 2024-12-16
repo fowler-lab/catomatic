@@ -364,7 +364,7 @@ def test_update(builder, wildcards):
 def test_build_piezo(builder, wildcards):
     # build a piezo compitable catalogue df
     catalogue = builder.build_piezo(
-        "genbank", "test", "1", "drug", wildcards, grammar="TEST", values="SUR"
+        "genbank", "test", "1", "drug", wildcards, grammar="GARC1", values="RUS"
     )
     # test basic argument additions to catalogue df
     assert catalogue.GENBANK_REFERENCE[0] == "genbank"
