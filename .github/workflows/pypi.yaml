@@ -12,27 +12,43 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - name: Check out repository code
+        uses: actions/checkout@v2
 
-      - name: Setup timezone
-        uses: zcong1993/setup-timezone@master
+      - name: Set up Conda
+        uses: conda-incubator/setup-miniconda@v2
         with:
-          timezone: UTC
+          auto-activate-base: false
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v2
+      - name: Download custom package
+        run: |
+          wget https://github.com/fowler-lab/intreg/releases/download/alpha/intreg-0.1.tar.gz
+
+      - name: Create Conda environment
+        run: conda env create --file env.yml
+
+      - name: Activate Conda environment and install dependencies
+        run: |
+          source $CONDA/bin/activate catomatic
+          pip install -e .
+          pip install ./intreg-0.1.tar.gz
+
+      - name: Verify Conda environment
+        run: |
+          source $CONDA/bin/activate catomatic
+          conda info --all
+          conda list
+
+      - name: Run Pytest and Coverage
+        run: |
+          source $CONDA/bin/activate catomatic
+          pytest --cov=catomatic src/tests/ --cov-report=xml
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v2
         with:
-          python-version: "3.10"
-
-      - name: Install Python dependencies
-        run: |
-          python3 -m pip install --upgrade pip
-          pip install -e .[test]
-
-      - name: Test with pytest
-        run: |
-          pytest --exitfirst --verbose --failed-first \
-          --cov=. --cov-report html
+          files: ./coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Install pypa/build
         run: >-
