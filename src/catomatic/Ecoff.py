@@ -10,7 +10,7 @@ class GenerateEcoff:
     Generate ECOFF values for wild-type samples using interval regression.
     """
 
-    def __init__(self, samples, mutations, dilution_factor=2, censored=True, tail_dilutions=None):
+    def __init__(self, samples, mutations, dilution_factor=2, censored=True, tail_dilutions=1):
         """
         Initialize the ECOFF generator with sample and mutation data.
 
