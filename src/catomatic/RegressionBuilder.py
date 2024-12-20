@@ -171,15 +171,19 @@ class BuildRegressionCatalogue:
         p = X.shape[1]
         midpoints = (y_low + y_high) / 2.0
         valid_midpoints = np.where(np.isfinite(midpoints), midpoints, np.nan)
-        beta_init = np.random.normal(loc=0, scale=0.5, size=p)
-        u_init = np.zeros(len(np.unique(clusters)))
+        valid_indices = ~np.isnan(valid_midpoints)
+        X_valid = X[valid_indices]
+        midpoints_valid = valid_midpoints[valid_indices]
+        # Initial estimate of beta via linear regression
+        beta_init = np.linalg.lstsq(X_valid, midpoints_valid, rcond=None)[0]
+        # Initial random effects - small non-zero value
+        u_init = np.random.normal(loc=0, scale=0.1, size=len(np.unique(clusters)))
         # sigma = 1  # Fixed initial sigma
         sigma = np.random.uniform(0.5, 2.0)
-        # sigma = np.random.uniform(0.5, 2.0)
 
         return beta_init, u_init, sigma
 
-    def fit(self, X, y_low, y_high, clusters, bounds=None, options=None):
+    def fit(self, X, y_low, y_high, clusters, bounds=None, options={}, L2_penalties={}):
         """
         Fit the regression model to the mutation and MIC interval data.
 
@@ -197,19 +201,22 @@ class BuildRegressionCatalogue:
         _b, _u, _s = self.initial_params(X, y_low, y_high, clusters)
         initial_params = np.concatenate([_b, _u, [_s]])
 
-        if options is not None:
+        if options is not None and len(options) > 0:
             return MeIntReg(y_low, y_high, X, clusters).fit(
                 method="L-BFGS-B",
                 initial_params=initial_params,
                 bounds=bounds,
                 options=options,
+                L2_penalties=L2_penalties,
             )
         else:
             return self.iter_tolerances(
-                X, y_low, y_high, clusters, initial_params, bounds
+                X, y_low, y_high, clusters, initial_params, bounds, L2_penalties
             )
 
-    def iter_tolerances(self, X, y_low, y_high, clusters, initial_params, bounds):
+    def iter_tolerances(
+        self, X, y_low, y_high, clusters, initial_params, bounds, L2_penalties
+    ):
         """
         Perform a grid search over optimization tolerances to find a successful fit, with
         early stopping on succes.
@@ -226,11 +233,13 @@ class BuildRegressionCatalogue:
             OptimizeResult: The first successful fit result.
         """
 
-        #may need to reduce maxfun search for speed up.
-        #maxfun (number function evaluations) is generally too low 
-        # (default 15000) to fit, so can get a success either by 
+        # may need to reduce maxfun search for speed up.
+        # maxfun (number function evaluations) is generally too low
+        # (default 15000) to fit, so can get a success either by
         # increasing or by loosening tolerances. Below tries to find a balance.
 
+        maxiter = 10000
+        maxfun = 50000
         gtols = [1e-5, 1e-4, 1e-3]
         ftols = [1e-9, 1e-8, 1e-7, 1e-6, 1e-5]
 
@@ -241,11 +250,12 @@ class BuildRegressionCatalogue:
                     initial_params=initial_params,
                     bounds=bounds,
                     options={
-                        "maxiter": 10000,
-                        "maxfun": 100000,
+                        "maxiter": maxiter,
+                        "maxfun": maxfun,
                         "ftol": ftol,
                         "gtol": gtol,
                     },
+                    L2_penalties=L2_penalties,
                 )
                 if r.success:
                     return r
@@ -256,6 +266,7 @@ class BuildRegressionCatalogue:
         u_bounds=(None, None),
         s_bounds=(None, None),
         options=None,
+        L2_penalties=None,
     ):
         """
         Predict mutation effects using the fitted regression model.
@@ -267,7 +278,9 @@ class BuildRegressionCatalogue:
                 Use (None, None) for no bounds (default).
             s_bounds (tuple or None): Bounds for the standard deviation parameter (\(\sigma\)) as a
                 tuple of (min, max). Use (None, None) for no bounds (default).
-            options (dict or None): options for scipy minimise
+            options (dict or None): options for scipy minimise (check scipy docs)
+            L2_penalties (dict or None): Regularisation strengths for fixed and random effects {lambda_beta:..., lambda_u:...}
+
 
         Returns:
             tuple: Fitted regression model and mutation matrix X.
@@ -280,6 +293,6 @@ class BuildRegressionCatalogue:
         u_bounds = [u_bounds] * len(np.unique(clusters))
         bounds = b_bounds + u_bounds + [s_bounds]
 
-        model = self.fit(X, y_low, y_high, clusters, bounds, options)
+        model = self.fit(X, y_low, y_high, clusters, bounds, options, L2_penalties)
 
-        return model, X
+        return model, X, y_low, y_high
