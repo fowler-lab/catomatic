@@ -1,16 +1,19 @@
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 from intreg.intreg import IntReg
-from .defence import validate_ecoff_inputs
+from .defence_module import validate_ecoff_inputs
+from .cli_module import main_ecoff_generator
 
 
-
-class GenerateEcoff:
+class EcoffGenerator:
     """
     Generate ECOFF values for wild-type samples using interval regression.
     """
 
-    def __init__(self, samples, mutations, dilution_factor=2, censored=True, tail_dilutions=1):
+    def __init__(
+        self, samples, mutations, dilution_factor=2, censored=True, tail_dilutions=1
+    ):
         """
         Initialize the ECOFF generator with sample and mutation data.
 
@@ -21,17 +24,25 @@ class GenerateEcoff:
             censored (bool): Flag to indicate if censored data is used.
             tail_dilutions (int): Number of dilutions to extend for interval tails if uncensored.
         """
+
+        samples = pd.read_csv(samples) if isinstance(samples, str) else samples
+        mutations = pd.read_csv(mutations) if isinstance(mutations, str) else mutations
+
         # Run input validation
-        validate_ecoff_inputs(samples, mutations, dilution_factor, censored, tail_dilutions)
+        validate_ecoff_inputs(
+            samples, mutations, dilution_factor, censored, tail_dilutions
+        )
 
         # Merge data and flag mutants
         self.df = pd.merge(samples, mutations, how="left", on=["UNIQUEID"])
         self.flag_mutants()
+        self.filter_mutants()
 
         # Set parameters
         self.dilution_factor = dilution_factor
         self.censored = censored
         self.tail_dilutions = tail_dilutions
+
 
     def flag_mutants(self):
         """
@@ -50,22 +61,26 @@ class GenerateEcoff:
         # Mark as mutant if not in wild-type or synonymous sets
         self.df["MUTANT"] = ~self.df["UNIQUEID"].isin(synonymous_ids | wt_ids)
 
-    def define_intervals(self, df):
+    def define_intervals(self, df=None):
         """
         Define MIC intervals based on the dilution factor and censoring settings.
 
         Args:
-            df (DataFrame): DataFrame containing MIC data.
+            df (DataFrame): DataFrame containing MIC data. If public access, can optionally supply a df to override the wt.
 
         Returns:
             tuple: Log-transformed lower and upper bounds for MIC intervals.
         """
+
+        if df is None:
+            df = self.wt_df
+
         y_low = np.zeros(len(df.MIC))
         y_high = np.zeros(len(df.MIC))
 
         # Calculate tail dilution factor if not censored
         if not self.censored:
-            tail_dilution_factor = self.dilution_factor ** self.tail_dilutions
+            tail_dilution_factor = self.dilution_factor**self.tail_dilutions
 
         # Process each MIC value and define intervals
         for i, mic in enumerate(df.MIC):
@@ -76,7 +91,9 @@ class GenerateEcoff:
             elif mic.startswith(">"):  # Right-censored
                 upper_bound = float(mic[1:])
                 y_low[i] = upper_bound
-                y_high[i] = np.inf if self.censored else upper_bound * tail_dilution_factor
+                y_high[i] = (
+                    np.inf if self.censored else upper_bound * tail_dilution_factor
+                )
             else:  # Exact MIC value
                 mic_value = float(mic)
                 y_low[i] = mic_value / self.dilution_factor
@@ -110,29 +127,55 @@ class GenerateEcoff:
         Returns:
             OptimizeResult: The result of the optimization containing fitted parameters.
         """
-        # Filter out mutant samples
-        self.wt_df = self.df[self.df.MUTANT == False]
         # Define and log-transform intervals
-        y_low, y_high = self.define_intervals(self.wt_df)
+        y_low, y_high = self.define_intervals()
         # Fit the model with log-transformed data
         return IntReg(y_low, y_high).fit(method="L-BFGS-B", initial_params=None)
-
-    def generate(self):
+    
+    def filter_mutants(self, mutant=False):
         """
-        Calculate the ECOFF value based on the fitted model.
+        Filters for wt or mutant samples. Defaults to wt (which is the assumed arg for the class)
+        Allows one to switch to explicilty fitting mutants for testing and devs.
+
+        Args:
+            mutant (bool): whether to filter for mutants or wt. Default to False
+        """
+
+        if mutant:
+            #filter for mutants (for testing and devs)
+            self.wt_df = self.df[self.df.MUTANT]
+        else:
+            self.wt_df = self.df[~self.df.MUTANT]
+        
+    def generate(self, percentile=99, run_mutants=False):
+        """
+        Calculate the ECOFF value based on the fitted model and a specified percentile.
+
+        Args:
+            percentile (float): The desired percentile (e.g., 99 for 99th percentile).
 
         Returns:
-            tuple: ECOFF in the original scale, the 99th percentile in the log-transformed scale, 
+            tuple: ECOFF in the original scale, the specified percentile in the log-transformed scale,
                    mean (mu), standard deviation (sigma), and the model result.
         """
-        
+
+        assert (
+            percentile > 0 and percentile < 100
+        ), "percentile must be a float or integer between 0 and 100"
+
         model = self.fit()
         # Extract model parameters
         mu, log_sigma = model.x
         sigma = np.exp(log_sigma)
-        # Calculate the 99th percentile (z_99) in log scale
-        z_99 = mu + 2.3263 * sigma
-        # Convert z_99 back to original MIC scale
-        ecoff = self.dilution_factor ** z_99
+        # Calulcate z-score for the given percentile
+        z_score = norm.ppf(percentile / 100)
+        # Calculate the percentile in log scale
+        z_percentile = mu + z_score * sigma
+        # Convert the percentile back to the original MIC scale
+        ecoff = self.dilution_factor**z_percentile
 
-        return ecoff, z_99, mu, sigma, model
+        return ecoff, z_percentile, mu, sigma, model
+
+
+if __name__ == "__main__":
+    main_ecoff_generator(EcoffGenerator)

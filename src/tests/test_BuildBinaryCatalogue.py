@@ -3,7 +3,7 @@ import pytest
 import json
 import subprocess
 import pandas as pd
-from catomatic.CatalogueBuilder import BuildCatalogue
+from catomatic.BinaryCatalogue import BinaryBuilder
 from scipy.stats import norm, binomtest, fisher_exact
 from unittest.mock import patch
 
@@ -99,13 +99,15 @@ def builder(request, phenotype_data, mutation_data):
         p = request.param.get("p", p)
         strict_unlock = request.param.get("strict_unlock", strict_unlock)
 
-    return BuildCatalogue(
+    return BinaryBuilder(
         phenotype_data,
         mutation_data,
-        p=p,
+        
+    ).build(
         background=background,
         strict_unlock=strict_unlock,
         test=test_type,
+        p=p,
     )
 
 
@@ -124,13 +126,13 @@ def test_add_mutation(builder):
 
 def test_build_contingency(solo_data):
     # for R + S
-    x_mut1 = BuildCatalogue.build_contingency(solo_data, "gene@A1S")[0]
+    x_mut1 = BinaryBuilder.build_contingency(solo_data, "gene@A1S")[0]
     assert x_mut1 == [[1, 1], [3, 1]]
     # for R
-    x_mut2 = BuildCatalogue.build_contingency(solo_data, "gene@A2S")[0]
+    x_mut2 = BinaryBuilder.build_contingency(solo_data, "gene@A2S")[0]
     assert x_mut2 == [[0, 1], [3, 1]]
     # For non-existent mutation - although should be filtered out beforehand
-    x_mut4 = BuildCatalogue.build_contingency(solo_data, "gene@A4S")[0]
+    x_mut4 = BinaryBuilder.build_contingency(solo_data, "gene@A4S")[0]
     assert x_mut4 == [[0, 0], [3, 1]]
 
 
@@ -143,7 +145,7 @@ def test_calc_proportion():
 
     for x, expected in x_tests:
         assert (
-            BuildCatalogue.calc_proportion(x) == expected
+            BinaryBuilder.calc_proportion(x) == expected
         ), f"Failed for contingency {x}"
 
 
@@ -156,7 +158,7 @@ def test_calc_oddsRatio():
 
     for x, expected in x_tests:
         assert (
-            BuildCatalogue.calc_oddsRatio(x) == expected
+            BinaryBuilder.calc_oddsRatio(x) == expected
         ), f"Failed for contingency {x}"
 
 
@@ -188,7 +190,7 @@ def test_skeleton_build(builder):
     # check its actually been added
     assert mutation in builder.catalogue
     # check if the correct phenotype has been added
-    assert builder.catalogue[mutation]["pred"] == 'U'
+    assert builder.catalogue[mutation]["pred"] == "U"
 
     expected_e = {
         "proportion": builder.calc_proportion(x),
@@ -346,7 +348,7 @@ def test_classify(builder):
 def test_update(builder, wildcards):
 
     # check addition to the catalogue with replacement
-    assert builder.catalogue["gene@A1S"]["pred"] == 'U'
+    assert builder.catalogue["gene@A1S"]["pred"] == "U"
     builder.update({"gene@A1S": "R"})
     assert builder.catalogue["gene@A1S"]["pred"] == "R"
     # check addition to the catalogue with wildcard and replacement

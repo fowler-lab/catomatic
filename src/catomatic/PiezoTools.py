@@ -1,6 +1,6 @@
 import json
 import pandas as pd
-from .defence import validate_build_piezo_inputs
+from .defence_module import validate_build_piezo_inputs
 
 class PiezoExporter:
 

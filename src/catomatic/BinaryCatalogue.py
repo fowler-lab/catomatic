@@ -5,11 +5,12 @@ import argparse
 import numpy as np
 import pandas as pd
 from .PiezoTools import PiezoExporter
-from .defence import validate_binary_build_inputs
+from .defence_module import validate_binary_init, validate_binary_build_inputs
+from .cli_module import main_binary_builder
 from scipy.stats import norm, binomtest, fisher_exact
 
 
-class BuildBinaryCatalogue(PiezoExporter):
+class BinaryBuilder(PiezoExporter):
     """
     Builds a mutation catalogue compatible with Piezo in a standardized format.
 
@@ -32,6 +33,46 @@ class BuildBinaryCatalogue(PiezoExporter):
         seed (list) optional): A list of predefined GARC neutral mutations with associated phenotypes
                                that are hardcoded prior to running the builder. Defaults to None.
 
+    """
+
+    def __init__(
+        self,
+        samples,
+        mutations,
+        FRS=None,
+        seed=None,
+    ):
+        samples = pd.read_csv(samples) if isinstance(samples, str) else samples
+        mutations = pd.read_csv(mutations) if isinstance(mutations, str) else mutations
+
+        # Run the validation function
+        validate_binary_init(samples, mutations, seed, FRS)
+
+        if FRS:
+            # Apply fraction read support thresholds to mutations to filter out irrelevant variants
+            mutations = mutations[(mutations.FRS >= FRS)]
+
+        self.samples = samples
+        self.mutations = mutations
+
+        # Instantiate attributes
+        self.catalogue = {}
+        self.entry = []
+        self.temp_ids = []
+        self.run_iter = True
+        self.seed = seed
+
+    def build(
+        self,
+        test=None,
+        background=None,
+        p=0.95,
+        tails="two",
+        strict_unlock=False,
+        record_ids=False,
+    ):
+        """
+        Args:
         test (str, optional): Type of statistical test to run for phenotyping. None (doesn't phenotype)
                                 vs binomial (against a defined background) vs Fisher (against contingency
                                 background). Defaults to none.
@@ -46,58 +87,30 @@ class BuildBinaryCatalogue(PiezoExporter):
                                         susceptiblity is sufficient for S classifcations. Defaults to False
         record_ids (bool, optional): If true, will track identifiers to which the mutations belong and were extracted
                                         from - helpful for detailed interrogation, but gives long evidence objects.
-                                        Defaults to False
+                                        Defaults to False"""
+        
+        validate_binary_build_inputs(test, background, p, tails, record_ids)
 
-    """
-
-    def __init__(
-        self,
-        samples,
-        mutations,
-        FRS=None,
-        seed=None,
-        test=None,
-        background=None,
-        p=0.95,
-        tails="two",
-        strict_unlock=False,
-        record_ids=False,
-    ):
-        samples = pd.read_csv(samples) if isinstance(samples, str) else samples
-        mutations = pd.read_csv(mutations) if isinstance(mutations, str) else mutations
-
-        # Run the validation function
-        validate_binary_build_inputs(
-            samples, mutations, seed, FRS, test, background, p, tails, record_ids
-        )
-
-        if FRS:
-            # Apply fraction read support thresholds to mutations to filter out irrelevant variants
-            mutations = mutations[(mutations.FRS >= FRS)]
-
-        # Instantiate attributes
-        self.catalogue = {}
-        self.entry = []
-        self.record_ids = record_ids
-        self.temp_ids = []
         self.test = test
         self.background = background
-        self.p = 1 - p
         self.strict_unlock = strict_unlock
+        self.p = 1 - p
         self.tails = tails
-        self.run_iter = True
-
-        if seed is not None:
+        self.record_ids = record_ids
+                
+        if self.seed is not None:
             # If there are seeded variants, hardcode them now
-            for i in seed:
+            for i in self.seed:
                 self.add_mutation(i, "S", {"seeded": "True"})
 
         while self.run_iter:
             # While there are susceptible solos, classify and remove them
-            self.classify(samples, mutations)
+            self.classify(self.samples, self.mutations)
 
         # If no more susceptible solos, classify all R and U solos in one, final sweep
-        self.classify(samples, mutations)
+        self.classify(self.samples, self.mutations)
+
+        return self
 
     def classify(self, samples, mutations):
         """
@@ -497,146 +510,6 @@ class BuildBinaryCatalogue(PiezoExporter):
         with open(outfile, "w") as f:
             json.dump(self.catalogue, f, indent=4)
 
-    @staticmethod
-    def parse_opt():
-        parser = argparse.ArgumentParser(
-            description="Build a catalogue and optionally export to Piezo format."
-        )
-        parser.add_argument(
-            "--samples", required=True, type=str, help="Path to the samples file."
-        )
-        parser.add_argument(
-            "--mutations", required=True, type=str, help="Path to the mutations file."
-        )
-        parser.add_argument(
-            "--FRS",
-            type=float,
-            default=None,
-            help="Optional: Fraction Read Support threshold.",
-        )
-        parser.add_argument(
-            "--seed", nargs="+", help="Optional: List of seed mutations."
-        )
-        parser.add_argument(
-            "--test",
-            type=str,
-            choices=[None, "Binomial", "Fisher"],
-            default=None,
-            help="Optional: Type of statistical test to run.",
-        )
-        parser.add_argument(
-            "--background",
-            type=float,
-            default=None,
-            help="Optional: Background mutation rate for the binomial test.",
-        )
-        parser.add_argument(
-            "--p",
-            type=float,
-            default=0.95,
-            help="Significance level for statistical testing.",
-        )
-        parser.add_argument(
-            "--strict_unlock",
-            action="store_true",
-            help="Enforce strict unlocking for classifications.",
-        )
-        parser.add_argument(
-            "--record_ids",
-            action="store_true",
-            help="Whether to record UNIQUEIDS in the catalogue",
-        )
-        parser.add_argument(
-            "--to_json",
-            action="store_true",
-            help="Flag to trigger exporting the catalogue to JSON format.",
-        )
-        parser.add_argument(
-            "--outfile",
-            type=str,
-            help="Path to output file for exporting the catalogue. Used with --to_json or --to_piezo.",
-        )
-        parser.add_argument(
-            "--to_piezo",
-            action="store_true",
-            help="Flag to export catalogue to Piezo format.",
-        )
-        parser.add_argument(
-            "--genbank_ref", type=str, help="GenBank reference for the catalogue."
-        )
-        parser.add_argument("--catalogue_name", type=str, help="Name of the catalogue.")
-        parser.add_argument("--version", type=str, help="Version of the catalogue.")
-        parser.add_argument(
-            "--drug", type=str, help="Drug associated with the mutations."
-        )
-        parser.add_argument(
-            "--wildcards", type=str, help="JSON file with wildcard rules."
-        )
-        parser.add_argument(
-            "--grammar",
-            type=str,
-            default="GARC1",
-            help="Grammar used in the catalogue.",
-        )
-        parser.add_argument(
-            "--values",
-            type=str,
-            default="RUS",
-            help="Values used for predictions in the catalogue.",
-        )
-        parser.add_argument(
-            "--for_piezo",
-            action="store_true",
-            help="If not planning to use piezo, set to False to avoid placeholder rows being added",
-        )
-        return parser.parse_args()
-
-
-def main():
-    args = BuildBinaryCatalogue.parse_opt()
-    catalogue = BuildBinaryCatalogue(
-        samples=args.samples,
-        mutations=args.mutations,
-        FRS=args.FRS,
-        seed=args.seed,
-        test=args.test,
-        background=args.background,
-        p=args.p,
-        strict_unlock=args.strict_unlock,
-        record_ids=args.record_ids,
-    )
-
-    if args.to_json:
-        if not args.outfile:
-            print("Please specify an output file with --outfile when using --to_json")
-            exit(1)
-        catalogue.to_json(args.outfile)
-
-    if args.to_piezo:
-        if not all(
-            [
-                args.genbank_ref,
-                args.catalogue_name,
-                args.version,
-                args.drug,
-                args.wildcards,
-                args.outfile,
-            ]
-        ):
-            print("Missing required arguments for exporting to Piezo format.")
-            exit(1)
-        catalogue.to_piezo(
-            genbank_ref=args.genbank_ref,
-            catalogue_name=args.catalogue_name,
-            version=args.version,
-            drug=args.drug,
-            wildcards=args.wildcards,
-            outfile=args.outfile,
-            grammar=args.grammar,
-            values=args.values,
-            for_piezo=args.for_piezo,
-        )
-
 
 if __name__ == "__main__":
-    main()
+    main_binary_builder(BinaryBuilder)
