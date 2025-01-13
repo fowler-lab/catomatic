@@ -521,3 +521,80 @@ def plot_catalogue_counts(df, figsize=(6, 2.5)):
             )
     ax.legend(frameon=False)
     plt.show()
+
+def plot_fitted_distribution(effects, df, x_min, x_max):
+
+    for _, row in effects.iterrows():
+        mutation_name = row['Mutation']
+        log2_mic = row['effect_size']  # Assuming log2(MIC) is stored in 'effect_size'
+        mic = row['MIC']  # Actual MIC value in the 'MIC' column
+
+        # Filter the DataFrame directly for the current mutation
+        mutation_df = df[df['MUTATION'] == mutation_name]
+
+        if len(mutation_df) > 3:
+            # Extract the intervals directly from the DataFrame
+            mutation_intervals = list(zip(mutation_df['y_low_log'], mutation_df['y_high_log']))
+
+            # Handle np.inf by replacing high values with an arbitrarily large width
+            processed_intervals = []
+            for low, high in mutation_intervals:
+                if high == np.inf:
+                    processed_intervals.append((low, x_max))  # Cap the high value at the plot limit
+                else:
+                    processed_intervals.append((low, high))
+
+            # Get unique intervals for the current mutation
+            unique_intervals = sorted(set(processed_intervals))
+
+            # Calculate counts for each unique interval
+            mutation_mic_counts = [processed_intervals.count(interval) for interval in unique_intervals]
+
+            # Extract the midpoints and widths for plotting the bars
+            interval_midpoints = [
+                (low + (high if high != x_max else x_max)) / 2
+                for low, high in unique_intervals
+            ]
+            interval_widths = [
+                (high - low if high != x_max else x_max - low)
+                for low, high in unique_intervals
+            ]
+
+            plt.figure(figsize=(4, 2))  # Create a new figure for each mutation
+
+            # Step 1: Plot the histogram of calculated MIC intervals for this mutation
+            plt.bar(interval_midpoints, height=mutation_mic_counts, width=interval_widths,
+                    align='center', edgecolor='black', color='skyblue', label='True MIC Distribution')
+
+            plt.axvline(x=0, linestyle='--', color='orange')
+
+            # Step 2: Overlay the fitted normal distribution for the current mutation
+            x_values = np.linspace(x_min, x_max, 100)
+
+            # Generate the normal distribution using log2(MIC) (effect size) and std
+            y_values = norm.pdf(x_values, loc=log2_mic, scale=row['effect_std'])
+
+            # Scale the normal distribution to match the height of the histogram
+            y_values *= max(mutation_mic_counts) / max(y_values)
+
+            # Plot the fitted curve
+            plt.plot(x_values, y_values, label=f'Fitted Curve for {mutation_name}', linestyle='-', color='red')
+
+            # Add text annotation for log2(MIC) and MIC
+            annotation_text = f"log2(MIC): {log2_mic:.2f}\nMIC: {mic:.2f}"
+            plt.text(x_min + 0.5, max(mutation_mic_counts) * 0.8, annotation_text, fontsize=8, color='black',
+                    bbox=dict(facecolor='white', edgecolor='white', alpha=0.7))
+
+            # Customize the plot
+            plt.xlabel('log2(MIC)')
+            plt.ylabel('Counts')
+            plt.title(f'{mutation_name}', fontsize=9)  # Smaller font size
+            plt.xlim([x_min, x_max])  # Set the consistent x-axis range
+
+            # Remove top and right spines
+            ax = plt.gca()
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            # Show the plot for this mutation
+            plt.show()

@@ -202,6 +202,12 @@ def parse_opt_regression_builder():
         "--mutations", required=True, type=str, help="Path to the mutations file (CSV)."
     )
     parser.add_argument(
+        "--genes",
+        type=list,
+        default=[],
+        help="A list of RAV genes. A list must be supplied if non-RAV genes are in the mutations table (ie if clustering snp distances)",
+    )
+    parser.add_argument(
         "--dilution_factor", type=int, default=2, help="Dilution factor (default: 2)."
     )
     parser.add_argument(
@@ -216,16 +222,16 @@ def parse_opt_regression_builder():
         help="Tail dilutions for uncensored data (default: 1).",
     )
     parser.add_argument(
-        "--cluster_distance",
-        type=float,
-        default=1,
-        help="Clustering distance threshold (default: 1).",
-    )
-    parser.add_argument(
         "--FRS",
         type=float,
         default=None,
         help="Fraction Read Support threshold (default: None).",
+    )
+    parser.add_argument(
+        "--ecoff",
+        type=float,
+        default=None,
+        help="Epidemiological cutoff value for classification. If None, it will be calculated",
     )
     parser.add_argument(
         "--b_bounds",
@@ -261,7 +267,36 @@ def parse_opt_regression_builder():
         help="Significance level for statistical testing (default: 0.95).",
     )
     parser.add_argument(
+        "--fixed_effects",
+        type=list,
+        default=None,
+        help="List of fixed effect column names (default: None).",
+    )
+    parser.add_argument(
+        "--random_effects",
+        type="store_true",
+        help="Whether to perform SNP clustering and include as a random effect (default True)",
+    )
+    parser.add_argument(
+        "--cluster_distance",
+        type=float,
+        default=1,
+        help="Clustering distance threshold (default: 1).",
+    )
+    parser.add_argument(
         "--outfile", type=str, help="Path to save the output JSON file."
+    )
+    parser.add_argument(
+        "--options",
+        type=dict,
+        default=None,
+        help="Scipy minimise's ptimization options for the regression fitting.",
+    )
+    parser.add_argument(
+        "L2_penalties",
+        type=dict,
+        default=None,
+        help="Regularization penalties for fixed and random effects",
     )
     return parser
 
@@ -282,10 +317,10 @@ def main_regression_builder(Class):
     builder = Class(
         samples=args.samples,
         mutations=args.mutations,
+        genes=args.genes,
         dilution_factor=args.dilution_factor,
         censored=args.censored,
         tail_dilutions=args.tail_dilutions,
-        cluster_distance=args.cluster_distance,
         FRS=args.FRS,
     )
 
@@ -293,8 +328,14 @@ def main_regression_builder(Class):
         b_bounds=args.b_bounds,
         u_bounds=args.u_bounds,
         s_bounds=args.s_bounds,
+        options=args.options,
+        L2_penalties=args.L2_penalties,
+        ecoff=args.ecoff,
         percentile=args.percentile,
         p=args.p,
+        fixed_effects=args.fixed_effects,
+        random_effects=args.random_effects,
+        cluster_distance=args.cluster_distance,
     )
 
     # Handle JSON export
