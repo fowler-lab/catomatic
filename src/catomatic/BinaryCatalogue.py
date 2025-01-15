@@ -512,4 +512,4 @@ class BinaryBuilder(PiezoExporter):
 
 
 if __name__ == "__main__":
-    main_binary_builder(BinaryBuilder)
+    main_binary_builder()

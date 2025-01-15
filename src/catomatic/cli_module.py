@@ -55,14 +55,16 @@ def parse_opt_ecoff_generator():
     return parser.parse_args()
 
 
-def main_ecoff_generator(Class):
+def main_ecoff_generator():
     """
     Main function to execute ECOFF generation from the command line.
     """
+    from catomatic.Ecoff import EcoffGenerator
+
     args = parse_opt_ecoff_generator()
 
     # Instantiate the GenerateEcoff class
-    generator = Class(
+    generator = EcoffGenerator(
         samples=args.samples,
         mutations=args.mutations,
         dilution_factor=args.dilution_factor,
@@ -152,7 +154,9 @@ def parse_opt_binary_builder():
     return parser
 
 
-def main_binary_builder(Class):
+def main_binary_builder():
+    from catomatic.BinaryCatalogue import BinaryBuilder
+
     binary_parser = parse_opt_binary_builder()
     piezo_parser = parse_opt_piezo_export()
 
@@ -161,7 +165,7 @@ def main_binary_builder(Class):
     piezo_args = piezo_parser.parse_args()
 
     # Instantiate the catalogue class and build the catalogue
-    builder = Class(
+    builder = BinaryBuilder(
         samples=args.samples,
         mutations=args.mutations,
         FRS=args.FRS,
@@ -274,7 +278,7 @@ def parse_opt_regression_builder():
     )
     parser.add_argument(
         "--random_effects",
-        type="store_true",
+        action="store_true",
         help="Whether to perform SNP clustering and include as a random effect (default True)",
     )
     parser.add_argument(
@@ -284,7 +288,7 @@ def parse_opt_regression_builder():
         help="Clustering distance threshold (default: 1).",
     )
     parser.add_argument(
-        "--outfile", type=str, help="Path to save the output JSON file."
+        "--outfile", type=str, required=False, help="Path to save the output JSON file."
     )
     parser.add_argument(
         "--options",
@@ -293,28 +297,34 @@ def parse_opt_regression_builder():
         help="Scipy minimise's ptimization options for the regression fitting.",
     )
     parser.add_argument(
-        "L2_penalties",
+        "--L2_penalties",
         type=dict,
         default=None,
         help="Regularization penalties for fixed and random effects",
     )
+    parser.add_argument(
+        "--to_json",
+        action="store_true",
+        help="Flag to trigger exporting the catalogue to JSON format.",
+    )
     return parser
 
 
-def main_regression_builder(Class):
+def main_regression_builder():
     """
     Main function to build the regression-based mutation catalogue and handle CLI options.
     """
-    # Parse CLI arguments
+    from catomatic.RegressionCatalogue import RegressionBuilder
+    # Parse CLI arguments for regression builder
     regression_parser = parse_opt_regression_builder()
-    piezo_parser = parse_opt_piezo_export()
+    args, unknown = regression_parser.parse_known_args()
 
-    # Combine parsers for full CLI functionality
-    args, _ = regression_parser.parse_known_args()
-    piezo_args = piezo_parser.parse_args()
+    # Parse piezo arguments separately
+    piezo_parser = parse_opt_piezo_export()
+    piezo_args = piezo_parser.parse_args(unknown)
 
     # Instantiate RegressionBuilder and build the catalogue
-    builder = Class(
+    builder = RegressionBuilder(
         samples=args.samples,
         mutations=args.mutations,
         genes=args.genes,
@@ -342,9 +352,10 @@ def main_regression_builder(Class):
     if args.to_json:
         main_json_exporter(builder, args)
 
-    # Handle Piezo export
+    # Handle Piezo export if enabled
     if piezo_args.to_piezo:
         main_piezo_exporter(builder, piezo_args)
+
 
 
 def main_json_exporter(builder, args):

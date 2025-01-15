@@ -178,4 +178,4 @@ class EcoffGenerator:
 
 
 if __name__ == "__main__":
-    main_ecoff_generator(EcoffGenerator)
+    main_ecoff_generator()

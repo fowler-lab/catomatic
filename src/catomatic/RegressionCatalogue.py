@@ -6,6 +6,11 @@ from scipy.sparse import csr_matrix
 from scipy.stats import norm
 from .Ecoff import EcoffGenerator
 from .PiezoTools import PiezoExporter
+from .defence_module import (
+    validate_regression_init,
+    validate_regression_predict_inputs,
+    validate_regression_classify_inputs,
+)
 from .cli_module import main_regression_builder
 from intreg.meintreg import MeIntReg
 from sklearn.cluster import AgglomerativeClustering
@@ -27,7 +32,7 @@ class RegressionBuilder(PiezoExporter):
         censored=True,
         tail_dilutions=1,
         FRS=None,
-        seed=0
+        seed=0,
     ):
         """
         Initialize the ECOFF generator with sample and mutation data.
@@ -40,12 +45,27 @@ class RegressionBuilder(PiezoExporter):
             dilution_factor (int): The factor for dilution scaling (default is 2 for doubling).
             censored (bool): Flag to indicate if censored data is used.
             tail_dilutions (int): Number of dilutions to extend for interval tails if uncensored.
-            FRS: Placeholder for future functionality (default None).
+            FRS: Fraction of read support to filter mutations by (default None).
             seed: Numpy random seed (only pertains to initial parameter generator)
         """
 
         samples = pd.read_csv(samples) if isinstance(samples, str) else samples
         mutations = pd.read_csv(mutations) if isinstance(mutations, str) else mutations
+
+        validate_regression_init(
+            samples,
+            mutations,
+            genes,
+            dilution_factor,
+            censored,
+            tail_dilutions,
+            FRS,
+            seed,
+        )
+
+        if FRS is not None:
+            # note this will filter out mutations for clustering as well
+            mutations = mutations[mutations.FRS >= FRS]
 
         self.samples, self.mutations = samples, mutations
 
@@ -104,7 +124,8 @@ class RegressionBuilder(PiezoExporter):
 
         return X
 
-    def build_X_sparse(self, df):
+    @staticmethod
+    def build_X_sparse(df):
         """
         Build a sparse binary mutation matrix.
 
@@ -132,7 +153,8 @@ class RegressionBuilder(PiezoExporter):
 
         return X
 
-    def hamming_distance(self, X_sparse, n_jobs=-1, block_size=1000):
+    @staticmethod
+    def hamming_distance(X_sparse, n_jobs=-1, block_size=1000):
         """
         Compute pairwise absolute Hamming distance for a sparse binary matrix.
 
@@ -188,7 +210,7 @@ class RegressionBuilder(PiezoExporter):
 
         snps = self.mutations[
             ~self.mutations["MUTATION"].str.contains(
-                r"(?:indel|!|ins|del|Z|LOF)", regex=True
+                r"(?:indel|ins|del|Z|LOF)", regex=True
             )
         ].copy()
 
@@ -334,7 +356,7 @@ class RegressionBuilder(PiezoExporter):
         # Initial random effects - small non-zero value
         u_init = np.random.normal(loc=0, scale=0.1, size=len(np.unique(clusters)))
         # sigma - std of valid midpoints
-        sigma = np.nanstd(midpoints)
+        sigma = np.nanstd(midpoints_valid)
         sigma = np.log(sigma)
 
         return beta_init, u_init, sigma
@@ -445,12 +467,12 @@ class RegressionBuilder(PiezoExporter):
         Predict mutation effects using the fitted regression model.
 
         Args:
-            b_bounds (tuple or None): Bounds for the fixed effects coefficients (\(\beta\)).
-            u_bounds (tuple or None): Bounds for the random effects (\(u\)).
-            s_bounds (tuple or None): Bounds for the standard deviation parameter (\(\sigma\)).
+            b_bounds (tuple or None): Bounds for the fixed effects coefficients (beta).
+            u_bounds (tuple or None): Bounds for the random effects (u).
+            s_bounds (tuple or None): Bounds for the standard deviation parameter (sigma).
             options (dict or None): Options for scipy minimize.
             L2_penalties (dict or None): Regularization strengths for fixed and random effects.
-            fixed_effects (list of str, optional): List of fixed effect column names. Defaults to None
+            fixed_effects (list of str, optional): List of fixed effect column names - must exist in samples df. Defaults to None
             random_effects (bool): Whether to calculate SNP clusters for population structure.
             cluster_distance (int): Distance threshold for clustering.
 
@@ -458,14 +480,20 @@ class RegressionBuilder(PiezoExporter):
             tuple: Fitted regression model and mutation matrix X.
         """
 
-        y_low, y_high = self.define_intervals(self.samples)
+        validate_regression_predict_inputs(
+            self.samples.columns,
+            b_bounds,
+            u_bounds,
+            s_bounds,
+            options,
+            L2_penalties,
+            fixed_effects,
+            random_effects,
+            cluster_distance,
+            self.genes,
+        )
 
-        if random_effects:
-            assert len(self.genes) > 0, (
-                "If calculating random effect SNP distance clusters, "
-                "must instantiate with a whole genome mutations table (for clustering), "
-                "and a list of RAV genes to filter this by (for regression)"
-            )
+        y_low, y_high = self.define_intervals(self.samples)
 
         if len(self.genes) > 0:
             self.target_mutations = self.mutations[
@@ -519,9 +547,16 @@ class RegressionBuilder(PiezoExporter):
         p = X.shape[1]
         fixed_effect_coefs = model.x[:p]
 
-        columns_to_exclude = {
-            col for fe in fixed_effects for col in X.columns if col.startswith(f"{fe}_")
-        } if fixed_effects else set()
+        columns_to_exclude = (
+            {
+                col
+                for fe in fixed_effects
+                for col in X.columns
+                if col.startswith(f"{fe}_")
+            }
+            if fixed_effects
+            else set()
+        )
 
         # Filter out fixed-effect columns from the mutation columns
         mutation_columns = [col for col in X.columns if col not in columns_to_exclude]
@@ -593,6 +628,8 @@ class RegressionBuilder(PiezoExporter):
                 - effects (DataFrame): Updated DataFrame with new 'p_value' and 'Classification' columns.
                 - ecoff (float): The ECOFF value used for classification."""
 
+        validate_regression_classify_inputs(ecoff, percentile, p)
+
         if ecoff is None:
             ecoff, breakpoint, _, _, _ = EcoffGenerator(
                 self.samples,
@@ -659,10 +696,10 @@ class RegressionBuilder(PiezoExporter):
             s_bounds (tuple, optional): Bounds for the standard deviation parameter (min, max). Defaults to (None, None).
             options (dict, optional): Scipy minimise's ptimization options for the regression fitting. Defaults to None.
             L2_penalties (dict, optional): Regularization penalties for fixed and random effects. Defaults to None.
-            ecoff (float, optional): Epidemiological cutoff value for classification. If None, it will be calculated. Defaults to None.
+            ecoff (float, optional): Epidemiological cutoff value for classification, in logspace. If None, it will be calculated. Defaults to None.
             percentile (int/float, optional): Percentile for ECOFF calculation if ecoff is None. Defaults to 99.
             p (float, optional): Significance level for classification. Defaults to 0.95.
-            fixed_effects (list of str, optional): List of fixed effect column names. Defaults to None
+            fixed_effects (list of str, optional): List of fixed effect column names - column must exist in the samples df. Defaults to None
             random_effects (bool): Whether to calculate and include random effects (snp distance clusters)
             cluster_distance (float): v
         Returns:
@@ -722,4 +759,4 @@ class RegressionBuilder(PiezoExporter):
 
 
 if __name__ == "__main__":
-    main_regression_builder(RegressionBuilder)
+    main_regression_builder()

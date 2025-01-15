@@ -90,11 +90,12 @@ def validate_binary_build_inputs(
 def validate_regression_init(
     samples,
     mutations,
+    genes,
     dilution_factor,
     censored,
     tail_dilutions,
-    cluster_distance,
     FRS,
+    seed,
 ):
     # Check samples and mutations dataframes
     assert all(
@@ -109,9 +110,13 @@ def validate_regression_init(
         samples.UNIQUEID
     ), "Each sample should have only 1 MIC reading"
 
+    if len(genes) > 0:
+        # Ensure element-wise splitting of 'MUTATION' column
+        assert any(
+            mutations["MUTATION"].str.split("@").str[0].isin(genes)
+        ), "No mutations match the specified genes."
+
     assert samples["MIC"].notna().all(), "MIC column contains NaN values."
-    assert pd.api.types.is_numeric_dtype(samples["MIC"]), "MIC column must be numeric."
-    assert all(samples["MIC"] > 0), "All MIC values must be positive numbers."
 
     assert isinstance(
         dilution_factor, (int, float)
@@ -125,11 +130,6 @@ def validate_regression_init(
     assert isinstance(tail_dilutions, int), "Tail dilutions must be an integer."
     assert tail_dilutions >= 0, "Tail dilutions must be zero or a positive integer."
 
-    assert isinstance(
-        cluster_distance, (int, float)
-    ), "Cluster distance must be a number."
-    assert cluster_distance > 0, "Cluster distance must be greater than zero."
-
     if FRS is not None:
         assert isinstance(FRS, (int, float)), "FRS must be a float or integer."
         assert (
@@ -142,16 +142,27 @@ def validate_regression_init(
         set(samples["UNIQUEID"])
     ), "All UNIQUEID values in mutations must exist in samples."
 
+    assert isinstance(seed, int), "The random seed must be an integer"
 
-def validate_regression_build(
-    b_bounds, u_bounds, s_bounds, options, L2_penalties, ecoff, percentile, p
+
+def validate_regression_predict_inputs(
+    columns,
+    b_bounds,
+    u_bounds,
+    s_bounds,
+    options,
+    L2_penalties,
+    fixed_effects,
+    random_effects,
+    cluster_distance,
+    genes,
 ):
     for bounds, name in zip(
         [b_bounds, u_bounds, s_bounds], ["b_bounds", "u_bounds", "s_bounds"]
     ):
         if bounds is not None:
             assert (
-                isinstance(bounds, tuple) and len(bounds) == 2
+                isinstance(bounds, (tuple, list)) and len(bounds) == 2
             ), f"{name} must be a tuple with two elements (min, max)."
             assert all(
                 x is None or isinstance(x, (int, float)) for x in bounds
@@ -162,17 +173,49 @@ def validate_regression_build(
                 ), f"Invalid range in {name}: min cannot be greater than max."
 
     if options is not None:
-        assert isinstance(options, dict), "Options must be a dictionary."   
+        assert isinstance(
+            options, dict
+        ), "Options must be a dictionary of scipy minimise arguments."
 
     if L2_penalties is not None:
         assert isinstance(L2_penalties, dict), "L2_penalties must be a dictionary."
-        valid_keys = {"lambda_beta", "lambda_u"}
-        assert set(L2_penalties.keys()).issubset(valid_keys), (
-            f"L2_penalties keys must be a subset of {valid_keys}."
-        )
+        valid_keys = {"lambda_beta", "lambda_u", "lambda_sigma"}
+        assert set(L2_penalties.keys()).issubset(
+            valid_keys
+        ), f"L2_penalties keys must be a subset of {valid_keys}."
         for key, value in L2_penalties.items():
-            assert isinstance(value, (int, float)), f"{key} in L2_penalties must be numeric."
+            assert isinstance(
+                value, (int, float)
+            ), f"{key} in L2_penalties must be numeric."
             assert value >= 0, f"{key} in L2_penalties must be non-negative."
+
+    assert isinstance(
+        random_effects, bool
+    ), "Random effects must be a boolean value (True or False)."
+
+    if random_effects:
+        assert len(genes) > 0, (
+            "If calculating random effect SNP distance clusters, "
+            "must instantiate with a whole genome mutations table (for clustering), "
+            "and a list of RAV genes to filter this by (for regression)"
+        )
+        assert (
+            isinstance(cluster_distance, int) and cluster_distance > 0
+        ), "Cluster distance must be a number greater than 0."
+
+    if fixed_effects is not None:
+        assert isinstance(
+            fixed_effects, list
+        ), "Fixed effects must be a list of column names"
+        assert all(fe in columns for fe in fixed_effects), "One or more fixed effects do not exist in input data"
+
+
+
+def validate_regression_classify_inputs(
+    ecoff,
+    percentile,
+    p,
+):
 
     if ecoff is not None:
         assert isinstance(ecoff, (int, float)), "ECOFF must be a numeric value."
