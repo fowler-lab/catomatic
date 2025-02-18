@@ -381,7 +381,7 @@ def test_build_piezo(builder, wildcards):
 
 def test_cli_help():
     result = subprocess.run(
-        [sys.executable, "-m", "catomatic.BinaryBuilder", "--help"],
+        [sys.executable, "-m", "catomatic.BinaryCatalogue", "--help"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=True,
@@ -394,7 +394,7 @@ def test_cli_execution(phenotypes_file, mutations_file, output_file):
         [
             sys.executable,
             "-m",
-            "catomatic.BinaryBuilder",
+            "catomatic.BinaryCatalogue",
             "--samples",
             phenotypes_file,
             "--mutations",
@@ -425,7 +425,7 @@ def test_to_json_output(phenotypes_file, mutations_file, output_file):
         [
             sys.executable,
             "-m",
-            "catomatic.BinaryBuilder",
+            "catomatic.BinaryCatalogue",
             "--samples",
             phenotypes_file,
             "--mutations",
@@ -459,7 +459,7 @@ def test_missing_piezo(phenotypes_file, mutations_file, output_file):
             "coverage",
             "run",
             "-m",
-            "catomatic.BinaryBuilder",
+            "catomatic.BinaryCatalogue",
             "--samples",
             phenotypes_file,
             "--mutations",
@@ -499,7 +499,7 @@ def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path)
             "coverage",
             "run",
             "-m",
-            "catomatic.BinaryBuilder",
+            "catomatic.BinaryCatalogue",
             "--samples",
             phenotypes_file,
             "--mutations",
