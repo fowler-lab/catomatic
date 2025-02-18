@@ -60,7 +60,7 @@ class PiezoExporter:
             json_dumps,
             include_U,
         )
-        print ('OUTFILE', outfile)
+        
         piezo_df.to_csv(outfile)
 
     def build_piezo(

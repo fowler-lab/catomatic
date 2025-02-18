@@ -75,6 +75,8 @@ class EcoffGenerator:
         if df is None:
             df = self.wt_df
 
+        df.drop_duplicates(['UNIQUEID'], inplace=True, keep='first')
+
         y_low = np.zeros(len(df.MIC))
         y_high = np.zeros(len(df.MIC))
 
