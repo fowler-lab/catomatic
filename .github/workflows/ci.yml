@@ -29,6 +29,9 @@ jobs:
           conda info --all
           conda list
 
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=$PYTHONPATH:$(pwd)/src" >> $GITHUB_ENV
+
       - name: Run Pytest and Coverage
         run: |
           source $CONDA/bin/activate catomatic
