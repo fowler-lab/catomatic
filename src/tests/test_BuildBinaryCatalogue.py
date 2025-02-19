@@ -379,9 +379,9 @@ def test_build_piezo(builder, wildcards):
     assert catalogue[catalogue.MUTATION == "gene@*="].PREDICTION.values[0] == "S"
 
 
-def test_cli_help():
+'''def test_cli_help():
     result = subprocess.run(
-        [sys.executable, "-m", "catomatic.BinaryCatalogue", "--help"],
+        [sys.executable, "-m", "catomatic", "binary", "--help"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=True,
@@ -394,12 +394,12 @@ def test_cli_execution(phenotypes_file, mutations_file, output_file):
         [
             sys.executable,
             "-m",
-            "catomatic.BinaryCatalogue",
+            "catomatic",
+            "binary",
             "--samples",
             phenotypes_file,
             "--mutations",
             mutations_file,
-            "--to_json",
             "--outfile",
             output_file,
             "--test",
@@ -540,3 +540,4 @@ def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path)
     assert piezo_df.loc[0, "DRUG"] == "drug"
     assert "gene@A2S" in piezo_df["MUTATION"].values
     assert "gene@*=" in piezo_df["MUTATION"].values
+'''

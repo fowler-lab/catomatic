@@ -177,7 +177,3 @@ class EcoffGenerator:
         ecoff = self.dilution_factor**z_percentile
 
         return ecoff, z_percentile, mu, sigma, model
-
-
-if __name__ == "__main__":
-    main_ecoff_generator()

@@ -157,14 +157,16 @@ def parse_opt_binary_builder():
 def main_binary_builder():
     from catomatic.BinaryCatalogue import BinaryBuilder
 
-    binary_parser = parse_opt_binary_builder()
-    piezo_parser = parse_opt_piezo_export()
+    # Create main parser
+    full_parser = argparse.ArgumentParser(
+        description="Binary Builder CLI",
+        parents=[parse_opt_binary_builder(), parse_opt_piezo_export()],  # Merge parsers
+        add_help=True  # Only enable help here
+    )
 
-    # Combine parsers for full CLI functionality
-    args, _ = binary_parser.parse_known_args()
-    piezo_args = piezo_parser.parse_args()
+    args = full_parser.parse_args()  # Ensure all args are parsed together
 
-    # Instantiate the catalogue class and build the catalogue
+    # Instantiate BinaryBuilder
     builder = BinaryBuilder(
         samples=args.samples,
         mutations=args.mutations,
@@ -185,8 +187,10 @@ def main_binary_builder():
         main_json_exporter(builder, args)
 
     # Handle Piezo export
-    if piezo_args.to_piezo:
-        main_piezo_exporter(builder, piezo_args)
+    if args.to_piezo:
+        main_piezo_exporter(builder, args)
+
+
 
 
 def parse_opt_regression_builder():
@@ -395,32 +399,18 @@ def main_piezo_exporter(builder, piezo_args):
 
 def parse_opt_piezo_export():
     parser = argparse.ArgumentParser(
-        description="Export the catalogue in piezo standard format"
+        description="Export the catalogue in piezo standard format",
+        add_help=False  # Disable auto `-h/--help` to prevent conflicts
     )
-    parser.add_argument(
-        "--to_piezo",
-        action="store_true",
-        help="Flag to export catalogue to Piezo format.",
-    )
-    parser.add_argument(
-        "--genbank_ref", type=str, help="GenBank reference for the catalogue."
-    )
+    parser.add_argument("--to_piezo", action="store_true", help="Flag to export catalogue to Piezo format.")
+    parser.add_argument("--genbank_ref", type=str, help="GenBank reference for the catalogue.")
     parser.add_argument("--catalogue_name", type=str, help="Name of the catalogue.")
     parser.add_argument("--version", type=str, help="Version of the catalogue.")
     parser.add_argument("--drug", type=str, help="Drug associated with the mutations.")
     parser.add_argument("--wildcards", type=str, help="JSON file with wildcard rules.")
-    parser.add_argument(
-        "--grammar", type=str, default="GARC1", help="Grammar used in the catalogue."
-    )
-    parser.add_argument(
-        "--values",
-        type=str,
-        default="RUS",
-        help="Values used for predictions in the catalogue.",
-    )
-    parser.add_argument(
-        "--for_piezo",
-        action="store_true",
-        help="If not planning to use piezo, set to False to avoid placeholder rows being added",
-    )
+    parser.add_argument("--grammar", type=str, default="GARC1", help="Grammar used in the catalogue.")
+    parser.add_argument("--values", type=str, default="RUS", help="Values used for predictions in the catalogue.")
+    parser.add_argument("--for_piezo", action="store_true",
+                        help="If not planning to use piezo, set to False to avoid placeholder rows being added")
+    
     return parser

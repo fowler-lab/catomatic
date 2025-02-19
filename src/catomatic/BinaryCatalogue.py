@@ -510,6 +510,3 @@ class BinaryBuilder(PiezoExporter):
         with open(outfile, "w") as f:
             json.dump(self.catalogue, f, indent=4)
 
-
-if __name__ == "__main__":
-    main_binary_builder()
