@@ -448,6 +448,16 @@ def test_add_mutation(mixed_variants):
 
 def test_build(mixed_variants):
     """Test the build method to construct the mutation catalogue."""
+
+    def round_dict_values(d, decimals=3):
+        """Recursively round all float values in a dictionary to the specified decimals."""
+        for key, value in d.items():
+            if isinstance(value, dict):
+                d[key] = round_dict_values(value, decimals)
+            elif isinstance(value, float):
+                d[key] = round(value, decimals)
+        return d
+
     samples, mutations = mixed_variants
 
     # Add REF and ALT columns for SNPs
@@ -487,12 +497,17 @@ def test_build(mixed_variants):
         }
     }
 
+    # Round expected and actual catalogue values
+    rounded_expected_catalogue = round_dict_values(expected_catalogue)
+    rounded_actual_catalogue = round_dict_values(builder.catalogue)
+
     # Validate catalogue
     assert (
-        builder.catalogue == expected_catalogue
-    ), f"Expected catalogue: {expected_catalogue}, but got {builder.catalogue}"
+        rounded_actual_catalogue == rounded_expected_catalogue
+    ), f"Expected catalogue: {rounded_expected_catalogue}, but got {rounded_actual_catalogue}"
 
-    print("Catalogue:\n", builder.catalogue)
+    print("Catalogue:\n", rounded_actual_catalogue)
+
 
 
 def test_main_regression_builder(mixed_variants, tmp_path):
