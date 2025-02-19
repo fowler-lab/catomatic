@@ -11,7 +11,6 @@ from .defence_module import (
     validate_regression_predict_inputs,
     validate_regression_classify_inputs,
 )
-from .cli_module import main_regression_builder
 from intreg.meintreg import MeIntReg
 from sklearn.cluster import AgglomerativeClustering
 

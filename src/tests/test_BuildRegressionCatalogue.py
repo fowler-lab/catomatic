@@ -1,11 +1,14 @@
 import pytest
 import os
 import json
+import sys
+import subprocess
 import numpy as np
 import pandas as pd
 from unittest.mock import patch
 from scipy.optimize import OptimizeResult
-from catomatic.RegressionCatalogue import RegressionBuilder, main_regression_builder
+from catomatic.RegressionCatalogue import RegressionBuilder
+from catomatic.cli import main_regression_builder
 from scipy.spatial.distance import pdist, squareform
 
 
@@ -524,7 +527,7 @@ def test_main_regression_builder(mixed_variants, tmp_path):
 
     # Mock CLI arguments
     cli_args = [
-        "script_name",  # Placeholder for script name
+        "regression",  # Placeholder for script name
         "--samples", str(samples_file),
         "--mutations", str(mutations_file),
         "--dilution_factor", "2",
@@ -544,7 +547,7 @@ def test_main_regression_builder(mixed_variants, tmp_path):
 
     # Mock sys.argv
     with patch("sys.argv", cli_args):
-        main_regression_builder()
+        main_regression_builder(cli_args)
 
     # Validate output JSON
     assert os.path.exists(output_file), f"Output file {output_file} was not created."
@@ -557,3 +560,64 @@ def test_main_regression_builder(mixed_variants, tmp_path):
     assert "mut0@V1!" in catalogue, "Expected mutation 'mut0@V1!' in catalogue."
     assert "mut1@G12G" in catalogue, "Expected mutation 'mut1@G12G' in catalogue."
 
+
+
+def test_main_regression_builder(mixed_variants, tmp_path):
+    """Test the CLI for the RegressionBuilder class."""
+    samples, mutations = mixed_variants
+
+    # Create temporary files for samples and mutations
+    samples_file = tmp_path / "samples.csv"
+    mutations_file = tmp_path / "mutations.csv"
+    output_file = tmp_path / "catalogue.json"
+
+    samples.to_csv(samples_file, index=False)
+    mutations.to_csv(mutations_file, index=False)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            "-m",
+            "catomatic",
+            "regression",  # <-- Use correct command structure
+            "--samples", str(samples_file),
+            "--mutations", str(mutations_file),
+            "--dilution_factor", "2",
+            "--censored",
+            "--tail_dilutions", "1",
+            "--ecoff", "1",
+            "--b_bounds", "-5", "5",
+            "--u_bounds", "-5", "5",
+            "--s_bounds", "-5", "5",
+            "--percentile", "99",
+            "--p", "0.95",
+            "--cluster_distance", "50",
+            "--outfile", str(output_file),
+            "--to_json",  
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    # Print output in case of failure for debugging
+    if result.returncode != 0:
+        print("STDOUT:", result.stdout.decode())
+        print("STDERR:", result.stderr.decode())
+
+    # Assert that the command executed successfully
+    assert result.returncode == 0, f"Subprocess failed with exit status: {result.returncode}"
+
+    # Ensure output file was created
+    assert os.path.exists(output_file), f"Output file {output_file} was not created."
+
+    # Load and validate the JSON output
+    with open(output_file, "r") as f:
+        catalogue = json.load(f)
+
+    assert isinstance(catalogue, dict), "Catalogue should be a dictionary."
+    assert "mut0@V1!" in catalogue, "Expected mutation 'mut0@V1!' in catalogue."
+    assert "mut1@G12G" in catalogue, "Expected mutation 'mut1@G12G' in catalogue."

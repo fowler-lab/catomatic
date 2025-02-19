@@ -1,50 +1,52 @@
 import argparse
-import sys
-from catomatic.cli_module import (
-    main_binary_builder,
+from catomatic.cli import (
+    parse_ecoff_generator,
     main_ecoff_generator,
+    parse_binary_builder,
+    main_binary_builder,
+    parse_regression_builder,
     main_regression_builder,
-    parse_opt_binary_builder,
-    parse_opt_ecoff_generator,
-    parse_opt_regression_builder,
 )
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Catomatic CLI")
-    subparsers = parser.add_subparsers(dest="command", required=True, help="Available subcommands")
+    """
+    Main function to parse command-line arguments and execute the appropriate module.
+    """
+    parser = argparse.ArgumentParser(
+        description="Catomatic CLI - Run different catalogue builders and ECOFF generators."
+    )
+    
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Binary Builder Command
-    binary_parser = subparsers.add_parser("binary", help="Run binary builder")
-    binary_args = parse_opt_binary_builder()
-    for action in binary_args._actions:
-        if action.option_strings:
-            binary_parser.add_argument(*action.option_strings, **vars(action))
+    # ECOFF Generator
+    ecoff_parser = subparsers.add_parser("ecoff", help="Generate ECOFF values for wild-type samples.")
+    for action in parse_ecoff_generator()._actions:
+        if action.dest != "help":
+            ecoff_parser._add_action(action)
 
-    # Ecoff Generator Command
-    ecoff_parser = subparsers.add_parser("ecoff", help="Run ecoff generator")
-    ecoff_args = parse_opt_ecoff_generator()
-    for action in ecoff_args._actions:
-        if action.option_strings:
-            ecoff_parser.add_argument(*action.option_strings, **vars(action))
+    # Binary Catalogue Builder
+    binary_parser = subparsers.add_parser("binary", help="Build a catalogue using the binary frequentist approach.")
+    for action in parse_binary_builder()._actions:
+        if action.dest != "help":
+            binary_parser._add_action(action)
 
-    # Regression Builder Command
-    regression_parser = subparsers.add_parser("regression", help="Run regression builder")
-    regression_args = parse_opt_regression_builder()
-    for action in regression_args._actions:
-        if action.option_strings:
-            regression_parser.add_argument(*action.option_strings, **vars(action))
+    # Regression Catalogue Builder
+    regression_parser = subparsers.add_parser("regression", help="Build a regression-based mutation catalogue.")
+    for action in parse_regression_builder()._actions:
+        if action.dest != "help":
+            regression_parser._add_action(action)
 
     args = parser.parse_args()
 
-    # Dispatch
-    if args.command == "binary":
-        main_binary_builder()
-    elif args.command == "ecoff":
-        main_ecoff_generator()
+    # Pass `args` directly to avoid re-parsing
+    if args.command == "ecoff":
+        main_ecoff_generator(args)
+    elif args.command == "binary":
+        main_binary_builder(args)
     elif args.command == "regression":
-        main_regression_builder()
-    else:
-        parser.print_help()
+        main_regression_builder(args)
+
 
 if __name__ == "__main__":
     main()

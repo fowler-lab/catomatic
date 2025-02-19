@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 from .PiezoTools import PiezoExporter
 from .defence_module import validate_binary_init, validate_binary_build_inputs
-from .cli_module import main_binary_builder
 from scipy.stats import norm, binomtest, fisher_exact
 
 

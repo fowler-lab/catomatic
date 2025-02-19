@@ -379,7 +379,7 @@ def test_build_piezo(builder, wildcards):
     assert catalogue[catalogue.MUTATION == "gene@*="].PREDICTION.values[0] == "S"
 
 
-'''def test_cli_help():
+def test_cli_help():
     result = subprocess.run(
         [sys.executable, "-m", "catomatic", "binary", "--help"],
         stdout=subprocess.PIPE,
@@ -428,7 +428,8 @@ def test_to_json_output(phenotypes_file, mutations_file, output_file):
         [
             sys.executable,
             "-m",
-            "catomatic.BinaryCatalogue",
+            "catomatic",
+            "binary",
             "--samples",
             phenotypes_file,
             "--mutations",
@@ -441,6 +442,8 @@ def test_to_json_output(phenotypes_file, mutations_file, output_file):
         stderr=subprocess.PIPE,
         check=False,
     )
+    print("STDOUT:", result.stdout.decode())
+    print("STDERR:", result.stderr.decode())
     assert result.returncode == 0, "Subprocess failed with exit status: {}".format(
         result.returncode
     )
@@ -462,7 +465,8 @@ def test_missing_piezo(phenotypes_file, mutations_file, output_file):
             "coverage",
             "run",
             "-m",
-            "catomatic.BinaryCatalogue",
+            "catomatic",
+            "binary",
             "--samples",
             phenotypes_file,
             "--mutations",
@@ -502,7 +506,8 @@ def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path)
             "coverage",
             "run",
             "-m",
-            "catomatic.BinaryCatalogue",
+            "catomatic",
+            "binary",
             "--samples",
             phenotypes_file,
             "--mutations",
@@ -540,4 +545,3 @@ def test_to_piezo_output(phenotypes_file, mutations_file, output_file, tmp_path)
     assert piezo_df.loc[0, "DRUG"] == "drug"
     assert "gene@A2S" in piezo_df["MUTATION"].values
     assert "gene@*=" in piezo_df["MUTATION"].values
-'''
