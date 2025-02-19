@@ -415,6 +415,9 @@ def test_cli_execution(phenotypes_file, mutations_file, output_file):
         check=False,
     )
 
+    print("STDOUT:", result.stdout.decode())
+    print("STDERR:", result.stderr.decode())
+
     assert result.returncode == 0, "Subprocess failed with exit status: {}".format(
         result.returncode
     )
