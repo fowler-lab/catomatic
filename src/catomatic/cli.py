@@ -1,8 +1,6 @@
 import argparse
-import pandas as pd
 
-
-def parse_opt_ecoff_generator():
+def parse_ecoff_generator():
     """
     Parse command-line options for the GenerateEcoff class.
 
@@ -52,16 +50,14 @@ def parse_opt_ecoff_generator():
         type=str,
         help="Optional path to save the ECOFF result to a file.",
     )
-    return parser.parse_args()
+    return parser
 
 
-def main_ecoff_generator():
+def main_ecoff_generator(args):
     """
     Main function to execute ECOFF generation from the command line.
     """
     from catomatic.Ecoff import EcoffGenerator
-
-    args = parse_opt_ecoff_generator()
 
     # Instantiate the GenerateEcoff class
     generator = EcoffGenerator(
@@ -94,8 +90,7 @@ def main_ecoff_generator():
                 f"Model: {model}\n"
             )
 
-
-def parse_opt_binary_builder():
+def parse_binary_builder():
     parser = argparse.ArgumentParser(
         description="Build a catalogue using the binary frequentist approach"
     )
@@ -151,22 +146,22 @@ def parse_opt_binary_builder():
         type=str,
         help="Path to output file for exporting the catalogue. Used with --to_json or --to_piezo.",
     )
+    parser.add_argument("--to_piezo", action="store_true", help="Flag to export catalogue to Piezo format.")
+    parser.add_argument("--genbank_ref", type=str, help="GenBank reference for the catalogue.")
+    parser.add_argument("--catalogue_name", type=str, help="Name of the catalogue.")
+    parser.add_argument("--version", type=str, help="Version of the catalogue.")
+    parser.add_argument("--drug", type=str, help="Drug associated with the mutations.")
+    parser.add_argument("--wildcards", type=str, help="JSON file with wildcard rules.")
+    parser.add_argument("--grammar", type=str, default="GARC1", help="Grammar used in the catalogue.")
+    parser.add_argument("--values", type=str, default="RUS", help="Values used for predictions in the catalogue.")
+    parser.add_argument("--for_piezo", action="store_true",
+                        help="If not planning to use piezo, set to False to avoid placeholder rows being added")
     return parser
 
-
-def main_binary_builder():
+def main_binary_builder(args):
     from catomatic.BinaryCatalogue import BinaryBuilder
 
-    # Create main parser
-    full_parser = argparse.ArgumentParser(
-        description="Binary Builder CLI",
-        parents=[parse_opt_binary_builder(), parse_opt_piezo_export()],  # Merge parsers
-        add_help=True  # Only enable help here
-    )
-
-    args = full_parser.parse_args()  # Ensure all args are parsed together
-
-    # Instantiate BinaryBuilder
+    # No re-parsing, use `args` passed from __main__.py
     builder = BinaryBuilder(
         samples=args.samples,
         mutations=args.mutations,
@@ -182,18 +177,14 @@ def main_binary_builder():
         record_ids=args.record_ids,
     )
 
-    # Handle JSON export
     if args.to_json:
         main_json_exporter(builder, args)
 
-    # Handle Piezo export
     if args.to_piezo:
         main_piezo_exporter(builder, args)
 
 
-
-
-def parse_opt_regression_builder():
+def parse_regression_builder():
     """
     Parse command-line options for the RegressionBuilder class.
 
@@ -311,21 +302,24 @@ def parse_opt_regression_builder():
         action="store_true",
         help="Flag to trigger exporting the catalogue to JSON format.",
     )
+    parser.add_argument("--to_piezo", action="store_true", help="Flag to export catalogue to Piezo format.")
+    parser.add_argument("--genbank_ref", type=str, help="GenBank reference for the catalogue.")
+    parser.add_argument("--catalogue_name", type=str, help="Name of the catalogue.")
+    parser.add_argument("--version", type=str, help="Version of the catalogue.")
+    parser.add_argument("--drug", type=str, help="Drug associated with the mutations.")
+    parser.add_argument("--wildcards", type=str, help="JSON file with wildcard rules.")
+    parser.add_argument("--grammar", type=str, default="GARC1", help="Grammar used in the catalogue.")
+    parser.add_argument("--values", type=str, default="RUS", help="Values used for predictions in the catalogue.")
+    parser.add_argument("--for_piezo", action="store_true",
+                        help="If not planning to use piezo, set to False to avoid placeholder rows being added")
+    
     return parser
 
-
-def main_regression_builder():
+def main_regression_builder(args):
     """
     Main function to build the regression-based mutation catalogue and handle CLI options.
     """
     from catomatic.RegressionCatalogue import RegressionBuilder
-    # Parse CLI arguments for regression builder
-    regression_parser = parse_opt_regression_builder()
-    args, unknown = regression_parser.parse_known_args()
-
-    # Parse piezo arguments separately
-    piezo_parser = parse_opt_piezo_export()
-    piezo_args = piezo_parser.parse_args(unknown)
 
     # Instantiate RegressionBuilder and build the catalogue
     builder = RegressionBuilder(
@@ -357,10 +351,35 @@ def main_regression_builder():
         main_json_exporter(builder, args)
 
     # Handle Piezo export if enabled
-    if piezo_args.to_piezo:
-        main_piezo_exporter(builder, piezo_args)
+    if args.to_piezo:
+        main_piezo_exporter(builder, args)
 
 
+def main_piezo_exporter(builder, args):
+    if not all(
+        [
+            args.genbank_ref,
+            args.catalogue_name,
+            args.version,
+            args.drug,
+            args.wildcards,
+            args.outfile,
+        ]
+    ):
+        print("Missing required arguments for Piezo export.")
+        exit(1)
+    builder.to_piezo(
+        genbank_ref=args.genbank_ref,
+        catalogue_name=args.catalogue_name,
+        version=args.version,
+        drug=args.drug,
+        wildcards=args.wildcards,
+        outfile=args.outfile,
+        grammar=args.grammar,
+        values=args.values,
+        for_piezo=args.for_piezo,
+    )
+    print("Catalogue exported to Piezo format.")
 
 def main_json_exporter(builder, args):
     if not args.outfile:
@@ -369,48 +388,3 @@ def main_json_exporter(builder, args):
     builder.to_json(args.outfile)
     print(f"Catalogue exported to {args.outfile}")
 
-
-def main_piezo_exporter(builder, piezo_args):
-    if not all(
-        [
-            piezo_args.genbank_ref,
-            piezo_args.catalogue_name,
-            piezo_args.version,
-            piezo_args.drug,
-            piezo_args.wildcards,
-            piezo_args.outfile,
-        ]
-    ):
-        print("Missing required arguments for Piezo export.")
-        exit(1)
-    builder.to_piezo(
-        genbank_ref=piezo_args.genbank_ref,
-        catalogue_name=piezo_args.catalogue_name,
-        version=piezo_args.version,
-        drug=piezo_args.drug,
-        wildcards=piezo_args.wildcards,
-        outfile=piezo_args.outfile,
-        grammar=piezo_args.grammar,
-        values=piezo_args.values,
-        for_piezo=piezo_args.for_piezo,
-    )
-    print("Catalogue exported to Piezo format.")
-
-
-def parse_opt_piezo_export():
-    parser = argparse.ArgumentParser(
-        description="Export the catalogue in piezo standard format",
-        add_help=False  # Disable auto `-h/--help` to prevent conflicts
-    )
-    parser.add_argument("--to_piezo", action="store_true", help="Flag to export catalogue to Piezo format.")
-    parser.add_argument("--genbank_ref", type=str, help="GenBank reference for the catalogue.")
-    parser.add_argument("--catalogue_name", type=str, help="Name of the catalogue.")
-    parser.add_argument("--version", type=str, help="Version of the catalogue.")
-    parser.add_argument("--drug", type=str, help="Drug associated with the mutations.")
-    parser.add_argument("--wildcards", type=str, help="JSON file with wildcard rules.")
-    parser.add_argument("--grammar", type=str, default="GARC1", help="Grammar used in the catalogue.")
-    parser.add_argument("--values", type=str, default="RUS", help="Values used for predictions in the catalogue.")
-    parser.add_argument("--for_piezo", action="store_true",
-                        help="If not planning to use piezo, set to False to avoid placeholder rows being added")
-    
-    return parser

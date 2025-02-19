@@ -3,7 +3,6 @@ import pandas as pd
 from scipy.stats import norm
 from intreg.intreg import IntReg
 from .defence_module import validate_ecoff_inputs
-from .cli_module import main_ecoff_generator
 
 
 class EcoffGenerator:
