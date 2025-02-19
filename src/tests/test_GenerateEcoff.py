@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import pandas as pd
 from scipy.optimize import OptimizeResult
-from catomatic.Ecoff import GenerateEcoff
+from catomatic.Ecoff import EcoffGenerator
 
 
 @pytest.fixture
@@ -31,13 +31,13 @@ def mixed_variants():
 def test_flag_mutants(wt_samples, mixed_variants):
     """Test mutant flagging with simple sample data (no mutations)."""
     samples, mutations = wt_samples
-    ecoff = GenerateEcoff(samples, mutations)
+    ecoff = EcoffGenerator(samples, mutations)
     assert all(
         ecoff.df["MUTANT"] == False
     ), "All samples should be flagged as non-mutants."
 
     samples, mutations = mixed_variants
-    ecoff = GenerateEcoff(samples, mutations)
+    ecoff = EcoffGenerator(samples, mutations)
     expected_mutant_flags = [
         False,
         False,
@@ -52,7 +52,7 @@ def test_flag_mutants(wt_samples, mixed_variants):
 def test_define_intervals(wt_samples, mixed_variants):
     """Test interval definition for uncensored data."""
     samples, mutations = wt_samples
-    ecoff = GenerateEcoff(samples, mutations)
+    ecoff = EcoffGenerator(samples, mutations)
     y_low, y_high = ecoff.define_intervals(ecoff.df[ecoff.df["MUTANT"] == False])
 
     expected_y_low = [-1, 0, 0.58]
@@ -66,7 +66,7 @@ def test_define_intervals(wt_samples, mixed_variants):
     ), f"Expected y_high {expected_y_high}, got {y_high}"
 
     samples, mutations = mixed_variants
-    ecoff = GenerateEcoff(samples, mutations, censored=True)
+    ecoff = EcoffGenerator(samples, mutations, censored=True)
     y_low, y_high = ecoff.define_intervals(ecoff.df)
 
     expected_y_low = [-1, -19.93, 1.58, 1.0]
@@ -83,7 +83,7 @@ def test_define_intervals(wt_samples, mixed_variants):
 def test_log_transf_intervals(wt_samples):
     """Test log transformation of intervals with default dilution factor (2)."""
     samples, mutations = wt_samples
-    ecoff = GenerateEcoff(samples, mutations)
+    ecoff = EcoffGenerator(samples, mutations)
     y_low, y_high = np.array([0.5, 1.0, 1.5]), np.array([1.0, 2.0, 3.0])
     y_low_log, y_high_log = ecoff.log_transf_intervals(y_low, y_high)
 
@@ -101,7 +101,7 @@ def test_log_transf_intervals(wt_samples):
 def test_fit_model(wt_samples):
     """Test model fitting with simple sample data."""
     samples, mutations = wt_samples
-    ecoff = GenerateEcoff(samples, mutations)
+    ecoff = EcoffGenerator(samples, mutations)
     result = ecoff.fit()
 
     # Validate the optimization result
@@ -113,7 +113,7 @@ def test_fit_model(wt_samples):
 def test_generate_ecoff(wt_samples):
     """Test ECOFF generation with simple sample data."""
     samples, mutations = wt_samples
-    ecoff = GenerateEcoff(samples, mutations)
+    ecoff = EcoffGenerator(samples, mutations)
     ecoff_value, z_99, mu, sigma, model = ecoff.generate()
 
     assert isinstance(ecoff_value, float), "ECOFF should be a float."

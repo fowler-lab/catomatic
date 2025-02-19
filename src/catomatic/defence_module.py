@@ -11,20 +11,12 @@ def soft_assert(condition, message="Warning!"):
         warnings.warn(message, stacklevel=2)
 
 
-def validate_binary_build_inputs(
+def validate_binary_init(
     samples,
     mutations,
     seed,
     FRS,
-    test,
-    background,
-    p,
-    tails,
-    record_ids,
 ):
-    """
-    Validates the input parameters and raises errors or warnings as necessary.
-    """
     # Check samples and mutations dataframes
     assert all(
         column in samples.columns for column in ["UNIQUEID", "PHENOTYPE"]
@@ -61,6 +53,18 @@ def validate_binary_build_inputs(
             "FRS" in mutations.columns
         ), 'The mutations df must contain an "FRS" column to filter by FRS'
 
+
+def validate_binary_build_inputs(
+    test,
+    background,
+    p,
+    tails,
+    record_ids,
+):
+    """
+    Validates the input parameters and raises errors or warnings as necessary.
+    """
+
     assert isinstance(record_ids, bool), "record_ids parameter must be of type bool."
 
     if test is not None:
@@ -81,6 +85,147 @@ def validate_binary_build_inputs(
             "two",
             "one",
         ], "tails must either be 'one' or 'two'"
+
+
+def validate_regression_init(
+    samples,
+    mutations,
+    genes,
+    dilution_factor,
+    censored,
+    tail_dilutions,
+    FRS,
+    seed,
+):
+    # Check samples and mutations dataframes
+    assert all(
+        column in samples.columns for column in ["UNIQUEID", "MIC"]
+    ), "Input df must contain columns UNIQUEID and MIC"
+
+    assert all(
+        column in mutations.columns for column in ["UNIQUEID", "MUTATION"]
+    ), "Input df must contain columns UNIQUEID and MUTATION"
+
+    assert samples.UNIQUEID.nunique() == len(
+        samples.UNIQUEID
+    ), "Each sample should have only 1 MIC reading"
+
+    if len(genes) > 0:
+        # Ensure element-wise splitting of 'MUTATION' column
+        assert any(
+            mutations["MUTATION"].str.split("@").str[0].isin(genes)
+        ), "No mutations match the specified genes."
+
+    assert samples["MIC"].notna().all(), "MIC column contains NaN values."
+
+    assert isinstance(
+        dilution_factor, (int, float)
+    ), "Dilution factor must be an integer or float."
+    assert dilution_factor > 0, "Dilution factor must be greater than zero."
+
+    assert isinstance(
+        censored, bool
+    ), "Censored must be a boolean value (True or False)."
+
+    assert isinstance(tail_dilutions, int), "Tail dilutions must be an integer."
+    assert tail_dilutions >= 0, "Tail dilutions must be zero or a positive integer."
+
+    if FRS is not None:
+        assert isinstance(FRS, (int, float)), "FRS must be a float or integer."
+        assert (
+            "FRS" in mutations.columns
+        ), 'The mutations DataFrame must contain an "FRS" column to use FRS filtering.'
+
+    assert not samples.empty, "Samples DataFrame must not be empty."
+
+    assert set(mutations["UNIQUEID"]).issubset(
+        set(samples["UNIQUEID"])
+    ), "All UNIQUEID values in mutations must exist in samples."
+
+    assert isinstance(seed, int), "The random seed must be an integer"
+
+
+def validate_regression_predict_inputs(
+    columns,
+    b_bounds,
+    u_bounds,
+    s_bounds,
+    options,
+    L2_penalties,
+    fixed_effects,
+    random_effects,
+    cluster_distance,
+    genes,
+):
+    for bounds, name in zip(
+        [b_bounds, u_bounds, s_bounds], ["b_bounds", "u_bounds", "s_bounds"]
+    ):
+        if bounds is not None:
+            assert (
+                isinstance(bounds, (tuple, list)) and len(bounds) == 2
+            ), f"{name} must be a tuple with two elements (min, max)."
+            assert all(
+                x is None or isinstance(x, (int, float)) for x in bounds
+            ), f"{name} must contain only numeric values or None."
+            if all(x is not None for x in bounds):
+                assert (
+                    bounds[0] <= bounds[1]
+                ), f"Invalid range in {name}: min cannot be greater than max."
+
+    if options is not None:
+        assert isinstance(
+            options, dict
+        ), "Options must be a dictionary of scipy minimise arguments."
+
+    if L2_penalties is not None:
+        assert isinstance(L2_penalties, dict), "L2_penalties must be a dictionary."
+        valid_keys = {"lambda_beta", "lambda_u", "lambda_sigma"}
+        assert set(L2_penalties.keys()).issubset(
+            valid_keys
+        ), f"L2_penalties keys must be a subset of {valid_keys}."
+        for key, value in L2_penalties.items():
+            assert isinstance(
+                value, (int, float)
+            ), f"{key} in L2_penalties must be numeric."
+            assert value >= 0, f"{key} in L2_penalties must be non-negative."
+
+    assert isinstance(
+        random_effects, bool
+    ), "Random effects must be a boolean value (True or False)."
+
+    if random_effects:
+        assert len(genes) > 0, (
+            "If calculating random effect SNP distance clusters, "
+            "must instantiate with a whole genome mutations table (for clustering), "
+            "and a list of RAV genes to filter this by (for regression)"
+        )
+        assert (
+            isinstance(cluster_distance, int) and cluster_distance > 0
+        ), "Cluster distance must be a number greater than 0."
+
+    if fixed_effects is not None:
+        assert isinstance(
+            fixed_effects, list
+        ), "Fixed effects must be a list of column names"
+        assert all(fe in columns for fe in fixed_effects), "One or more fixed effects do not exist in input data"
+
+
+
+def validate_regression_classify_inputs(
+    ecoff,
+    percentile,
+    p,
+):
+
+    if ecoff is not None:
+        assert isinstance(ecoff, (int, float)), "ECOFF must be a numeric value."
+        assert ecoff > 0, "ECOFF must be a positive value."
+
+    assert isinstance(percentile, (int, float)), "Percentile must be numeric."
+    assert 0 < percentile <= 100, "Percentile must be between 1 and 100."
+
+    assert isinstance(p, (int, float)), "Significance level (p) must be numeric."
+    assert 0 < p < 1, "Significance level (p) must be between 0 and 1."
 
 
 def validate_build_piezo_inputs(
