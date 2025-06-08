@@ -6,33 +6,60 @@ Python code that algorithmically builds antimicrobial resistance catalogues of m
 
 ## Introduction
 
-This method relies on the logic that mutations that do not cause resistance can co-occur with those that do, and if a mutation in isolation (solo) does not cause resistance, then it will also not contribute to the phenotype when not in isolation.
+This repo contains 2 approaches to build resistance catalogues:
 
-Mutations that occur in isolation across specified genes are traversed in sequence, and if their proportion of drug-susceptibility (vs resistance) passes the specified statistical test, they are characterized as benign and removed from the dataset. This step repeats while there are susceptible mutations in isolation. Once the dataset has been 'cleaned' of benign mutations, resistant mutations are classified via their proportions by the specified test, failing which they are added to the catalogue as 'Unclassified'.
+1. **Definite defectives (solo-based approach)**
+2. **Interval regression**
 
-Construction can either rely on homogenous susceptibility for the particular mutation (and no explicit phenotyping is carried out, other than to unlock susceptible variants), use a Binomial test where the proportion of resistance is tested against a specified background rate, or a Fisher's test where the proportion of resistance is tested against a calculated background rate.
+The first is used in [https://doi.org/10.1101/2025.01.30.635633](https://doi.org/10.1101/2025.01.30.635633), and the second is a Python translation of the method used in [https://doi.org/10.1038/s41467-023-44325-5](https://doi.org/10.1038/s41467-023-44325-5), but is still under development.
 
-Although the method is entirely algorithmic, there are 2 entry points for intervention. Firstly, one is able to 'seed' the method with neutral mutations (such as those gathered in a literature search - often helpful if a gene contains phylogenetic mutations with high prevalence that add noise), and secondly one can add or overwrite classifications and entries to the catalogue, although not recommended unless aggregating.
+---
 
-Because the method uses and understands GARC1 grammar, one can supply 'rules' to the catalogue post-hoc - such as `{rpoB@*_fs:R}` for frameshifts in rpoB, which can either simply be added (and would have lower prediction priority to finer grain mutations, such as `rpoB@44_ins`) or can replace any mutations that fall under that rule, effectively aggregating relevant variants.
+## Binary Builder
 
-The generated catalogue can be returned either as a dictionary, or as a Pandas dataframe which can be exported in a Piezo compatible format for rapid parsing and resistance predictions.
+This method relies on the logic that mutations that do not cause resistance can co-occur with those that do. If a mutation in isolation (solo) does not cause resistance, then it is not contributing to the phenotype when present in a mixture either.
 
-Contingency tables, proportions, p_values, and Wilson's Confidence Intervals are logged under the 'EVIDENCE' column of the catalogue.
+Mutations that occur in isolation across specified genes are traversed in sequence, and if their proportion of drug-susceptibility (vs. resistance) passes the specified statistical test, they are characterized as benign (susceptible) and removed from the dataset. This step repeats iteratively until no more solo benign mutations are found.
 
-A workflow with example parameters:
+Remaining mutations are classified based on their resistance rates and statistical test results. Those that don’t meet thresholds are labeled as `U`.
+
+The classification approach supports:
+
+- **No test**: assumes homogeneous susceptibility is sufficient for S
+- **Binomial test**: against a specified background resistance rate
+- **Fisher's test**: using a contingency background
+
+### Optional Interventions
+
+1. **Seeding**: You can pre-seed the catalogue with known neutral mutations.
+2. **Overrides**: You can override or supplement the final catalogue with manual or rule-based entries.
+
+Because the method uses GARC1 grammar, rules like `{rpoB@*_fs:R}` can be supplied post-hoc. These rules can:
+
+- Be additive (lower priority than specific entries)
+- Replace matching mutations (requires `replace=True` and `wildcards` supplied)
+
+The catalogue can be returned as a dictionary or a Piezo-compatible `pandas.DataFrame`.
+
+Contingency tables, proportions, p-values, and Wilson confidence intervals are stored in the `EVIDENCE` field.
+
+### Example Workflow using Fisher's:
 
 ![Catalogue Diagram](docs/workflow.png)
+
+---
+
+## Regression Builder
+
+This method is under development and will be released soon with accompanying documentation.
+
+---
 
 ## Installation
 
 ### Using Conda
 
-It is recommended to manage the Python environment and dependencies through Conda. You can install Catomatic within a Conda environment by following these steps:
-
-#### Create and Activate Environment
-
-First, ensure that you have Conda installed. Then, create and activate a new environment, and install catomatic:
+We recommend using Conda for environment and dependency management.
 
 ```bash
 conda env create -f env.yml
@@ -40,62 +67,106 @@ conda activate catomatic
 pip install .
 ```
 
-## Running catomatic
+## Running catomatic's Binary Builder
 
-At the most basic level, the method takes 2 input dataframes: a `samples dataframe` which contains 1 row per sample with 'R' vs 'S' binary phenotypes, and a `mutations dataframe` which contains 1 row per mutation. They have to be joinable on their `UNIQUEID` columns.
+You need two input DataFrames:
 
-If exporting to Piezo format, the `MUTATION` column must contain GARC1 grammer (ie `gene@mutation`). One must also supply a path to the `wildcards.json` file, which should contain Piezo wildcards in a json object/dictionary (example file in `/data/bdq_wildcards.json`).
+- **Samples**: one row per sample, with 'R' or 'S' phenotypes (`UNIQUEID`, `PHENOTYPE`)
+- **Mutations**: one row per mutation per sample (`UNIQUEID`, `MUTATION`)
 
-If seeding or updating the catalogue, the mutation grammar must match that of the `MUTATION` column.
+If exporting to Piezo format:
+
+- The `MUTATION` column must follow GARC1 grammar (`gene@mutation`)
+- A path to a `wildcards.json` file (containing mutation rules) must be provided
+
+### Python/Jupyter Example
+
+```python
+from catomatic.BinaryCatalogue import BinaryBuilder
+
+# Build catalogue
+catalogue = BinaryBuilder(samples=samples_df, mutations=mutations_df).build()
+
+# View dictionary version
+cat_dict = catalogue.return_catalogue()
+
+# Convert to Piezo-compatible format
+catalogue_df = catalogue.build_piezo(
+    genbank_ref='...',
+    catalogue_name='...',
+    version='...',
+    drug='...',
+    wildcards='path/to/wildcards.json'
+)
+
+# Optionally export to CSV
+catalogue.to_piezo(
+    genbank_ref='...',
+    catalogue_name='...',
+    version='...',
+    drug='...',
+    wildcards='path/to/wildcards.json',
+    outfile='path/to/output.csv'
+)
+```
 
 ### CLI
 
-After installation, the simplest way to run the catomatic catalogue builder is via the command line interface. ` --to_piezo` or `--to_json ` flags will need to specified to save the catalogue (with additional arguments if using --to_piezo)
+After installation, the simplest way to run the catomatic catalogue builder is via the command line interface using the `binary` subcommand. You must use either `--to_piezo` or `--to_json` to specify the output format. Additional metadata is required when using `--to_piezo`.
 
-`BuildCatalogue --samples path/to/samples.csv --mutations path/to/mutations.csv  --to_json --outfile path/to/out/catalogue.json`
+#### Export to JSON
 
-or
-
-`BuildCatalogue --samples path/to/samples.csv --mutations path/to/mutations.csv  --to_piezo --outfile path/to/out/catalogue.csv --genbank_ref '...' --catalogue_name '...' --version '...' --drug '...' --wildcards path/to/wildcards.json`
-
-### Python/Jupyter notebook
-
-Should you wish to run catomatic in a notebook, for example, you can do so simply by calling BuildCatalogue after import.
-
-```python
-from catomatic.CatalogueBuilder import BuildCatalogue
-
-#instantiate a catalogue object - this will build the catalogue
-catalogue = BuildCatalogue(samples = samples_df, mutations = mutations_df)
-
-#return the catalogue as a dictionary in order of variant addition
-catalogue.return_catalogue()
-
-#return the catalogue as a piezo-structured dataframe
-catalogue.build_piezo(genbank_ref='...', catalogue_name='...', version='...', drug='...', wildcards='path/to/wildcards.json')
+```bash
+python -m catomatic binary \
+  --samples path/to/samples.csv \
+  --mutations path/to/mutations.csv \
+  --to_json \
+  --outfile path/to/output/catalogue.json
 ```
 
-More detailed examples on running catomatic can be found in `examples/demo.ipynb`
+#### Export to Piezo format
+
+```bash
+python -m catomatic binary \
+  --samples path/to/samples.csv \
+  --mutations path/to/mutations.csv \
+  --to_piezo \
+  --outfile path/to/output/catalogue.csv \
+  --genbank_ref '...' \
+  --catalogue_name '...' \
+  --version '...' \
+  --drug '...' \
+  --wildcards path/to/wildcards.json
+```
 
 ### CLI Parameters
 
-| Parameter          | Type    | Description                                                                                       |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------------- |
-| `--samples`        | `str`   | Path to the samples file. Required.                                                               |
-| `--mutations`      | `str`   | Path to the mutations file. Required.                                                             |
-| `--FRS`            | `float` | Fraction Read Support threshold. Optional.                                                        |
-| `--seed`           | `list`  | List of seed mutations using GARC grammar. Optional.                                              |
-| `--test`           | `str`   | Type of statistical test to run: `None`, `Binomial`, or `Fisher`. Optional.                       |
-| `--background`     | `float` | Background mutation rate for the binomial test. Required if using test = Binomial. Optional.      |
-| `--p`              | `float` | Significance level for statistical testing. Optional. Defaults to `0.95`.                         |
-| `--strict_unlock`  | `bool`  | Enforce strict unlocking for classifications, which requires p < 0.05. Optional.                  |
-| `--to_json`        | `bool`  | Export the catalogue to JSON format. Optional.                                                    |
-| `--outfile`        | `str`   | Path to output file for exporting the catalogue. Used with `--to_json` or `--to_piezo`. Optional. |
-| `--to_piezo`       | `bool`  | Export catalogue to Piezo format. Optional.                                                       |
-| `--genbank_ref`    | `str`   | GenBank reference for the catalogue. Required if to_piezo = True. Optional.                       |
-| `--catalogue_name` | `str`   | Name of the catalogue. Required if to_piezo = True. Optional.                                     |
-| `--version`        | `str`   | Version of the catalogue. Required if to_piezo = True. Optional.                                  |
-| `--drug`           | `str`   | Drug associated with the mutations. Required if to_piezo = True. Optional.                        |
-| `--wildcards`      | `str`   | JSON file with wildcard rules. Required if to_piezo = True. Optional.                             |
-| `--grammar`        | `str`   | Grammar used in the catalogue. Optional. Defaults to `GARC1`.                                     |
-| `--values`         | `str`   | Values used for predictions in the catalogue. Optional. Defaults to `RUS`.                        |
+| Parameter          | Type    | Description                                                                                    |
+| ------------------ | ------- | ---------------------------------------------------------------------------------------------- |
+| `--samples`        | `str`   | Path to the samples (phenotypes) file. Required.                                               |
+| `--mutations`      | `str`   | Path to the mutations file. Required.                                                          |
+| `--outfile`        | `str`   | Output file path for saving the catalogue. Required with `--to_json` or `--to_piezo`.          |
+| `--to_json`        | `flag`  | Export the resulting catalogue in JSON format. Optional.                                       |
+| `--to_piezo`       | `flag`  | Export the resulting catalogue in Piezo-compatible CSV format. Optional.                       |
+| `--genbank_ref`    | `str`   | GenBank reference string for Piezo export. Required with `--to_piezo`.                         |
+| `--catalogue_name` | `str`   | Name of the catalogue. Required with `--to_piezo`.                                             |
+| `--version`        | `str`   | Catalogue version. Required with `--to_piezo`.                                                 |
+| `--drug`           | `str`   | Name of the drug. Required with `--to_piezo`.                                                  |
+| `--wildcards`      | `str`   | Path to JSON file containing wildcard mutation definitions. Required with `--to_piezo`.        |
+| `--test`           | `str`   | Type of statistical test to apply. One of: `None`, `Binomial`, or `Fisher`. Optional.          |
+| `--background`     | `float` | Background mutation rate (0–1). Required if `--test Binomial` is used.                         |
+| `--p`              | `float` | P-value threshold for statistical significance. Optional. Defaults to `0.95`.                  |
+| `--tails`          | `str`   | Tail type for statistical test. One of: `one`, `two`. Optional. Defaults to `two`.             |
+| `--strict_unlock`  | `flag`  | If set, disables classification of susceptible (`S`) mutations unless statistically confident. |
+
+### Notes
+
+- When using post-hoc rule updates via .update(), you must provide wildcards and set replace=True if you intend to override existing entries.
+- For Piezo export, placeholder entries are inserted automatically if needed to satisfy parser requirements (R, S, and U must be represented).
+- The EVIDENCE column includes contingency tables, proportions, confidence intervals, and p-values, and may optionally include sample IDs if `record_ids=True`.
+
+## Citation
+
+If you use catomatic in your research, please cite:
+
+- https://doi.org/10.1101/2025.01.30.635633
