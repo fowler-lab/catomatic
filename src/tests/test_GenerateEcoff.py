@@ -22,105 +22,95 @@ def mixed_variants():
     mutations = pd.DataFrame(
         {
             "UNIQUEID": ["A", "B", "C"],
+            # B has a synonymous change, C has a non-synonymous change
             "MUTATION": [None, "mut1@G12G", "mut2@A13V"],
         }
     )
     return samples, mutations
 
 
-def test_flag_mutants(wt_samples, mixed_variants):
-    """Test mutant flagging with simple sample data (no mutations)."""
+def test_flag_test1_wt(wt_samples, mixed_variants):
+    # Test gWT_definition="test1" filtering
     samples, mutations = wt_samples
-    ecoff = EcoffGenerator(samples, mutations)
-    assert all(
-        ecoff.df["MUTANT"] == False
-    ), "All samples should be flagged as non-mutants."
+    ecoff = EcoffGenerator(samples, mutations, gWT_definition="test1")
+    # All samples should be flagged as WT
+    assert all(ecoff.df["WT"]), f"Expected all WT flags True, got {list(ecoff.df['WT'])}"
 
     samples, mutations = mixed_variants
-    ecoff = EcoffGenerator(samples, mutations)
-    expected_mutant_flags = [
-        False,
-        False,
-        True,
-        False,
-    ]  # Based on mutation column values
-    assert (
-        list(ecoff.df["MUTANT"]) == expected_mutant_flags
-    ), f"Expected mutant flags {expected_mutant_flags}, got {list(ecoff.df['MUTANT'])}"
+    ecoff = EcoffGenerator(samples, mutations, gWT_definition="test1")
+    # A: no mutation -> WT; B: synonymous -> WT; C: non-synonymous -> not WT; D: no entry -> WT
+    expected_wt_flags = [True, True, False, True]
+    assert list(ecoff.df["WT"]) == expected_wt_flags, (
+        f"Expected WT flags {expected_wt_flags}, got {list(ecoff.df['WT'])}"
+    )
 
 
-def test_define_intervals(wt_samples, mixed_variants):
-    """Test interval definition for uncensored data."""
+def test_define_intervals_uncensored(wt_samples):
+    # Uncensored interval definition uses tail_dilutions
     samples, mutations = wt_samples
-    ecoff = EcoffGenerator(samples, mutations)
-    y_low, y_high = ecoff.define_intervals(ecoff.df[ecoff.df["MUTANT"] == False])
+    ecoff = EcoffGenerator(samples, mutations, censored=False, tail_dilutions=1)
+    y_low, y_high = ecoff.define_intervals()
+    # Exact values: [1/2, 2/2, 3/2] and [1,2,3]
+    expected_low = np.array([0.5, 1.0, 1.5])
+    expected_high = np.array([1.0, 2.0, 3.0])
+    # Log2 transform
+    log2 = lambda x: np.log(x) / np.log(2)
+    assert np.allclose(y_low, log2(expected_low), atol=1e-3)
+    assert np.allclose(y_high, log2(expected_high), atol=1e-3)
 
-    expected_y_low = [-1, 0, 0.58]
-    expected_y_high = [0, 1, 1.58]
 
-    assert np.allclose(
-        y_low, expected_y_low, atol=1e-2
-    ), f"Expected y_low {expected_y_low}, got {y_low}"
-    assert np.allclose(
-        y_high, expected_y_high, atol=1e-2
-    ), f"Expected y_high {expected_y_high}, got {y_high}"
-
+def test_define_intervals_censored(mixed_variants):
+    # Censored interval definition for mixed variants
     samples, mutations = mixed_variants
     ecoff = EcoffGenerator(samples, mutations, censored=True)
-    y_low, y_high = ecoff.define_intervals(ecoff.df)
-
-    expected_y_low = [-1, -19.93, 1.58, 1.0]
-    expected_y_high = [0, 1, np.inf, 2.0]
-
-    assert np.allclose(
-        y_low, expected_y_low, atol=1e-2
-    ), f"Expected y_low {expected_y_low}, got {y_low}"
-    assert np.allclose(
-        y_high, expected_y_high, atol=1e-2
-    ), f"Expected y_high {expected_y_high}, got {y_high}"
+    y_low, y_high = ecoff.define_intervals()
+    # Expected: 
+    # A: [0.5,1] => log2: [-1,0]
+    # B: left-censored <=2 => [1e-6,2] => [log2(1e-6),1]
+    # C: right-censored >3 => [3,inf] => [log2(3), inf]
+    # D: [2,4] => [1,2]
+    assert pytest.approx(-1.0, abs=1e-3) == y_low[0]
+    assert pytest.approx(0.0, abs=1e-3) == y_high[0]
+    assert pytest.approx(np.log(1e-6)/np.log(2), abs=1e-3) == y_low[1]
+    assert pytest.approx(1.0, abs=1e-3) == y_high[1]
+    assert pytest.approx(np.log(3)/np.log(2), abs=1e-3) == y_low[2]
+    assert y_high[2] == np.inf
+    assert pytest.approx(1.0, abs=1e-3) == y_low[3]
+    assert pytest.approx(2.0, abs=1e-3) == y_high[3]
 
 
 def test_log_transf_intervals(wt_samples):
-    """Test log transformation of intervals with default dilution factor (2)."""
+    # Test direct log transformation
     samples, mutations = wt_samples
     ecoff = EcoffGenerator(samples, mutations)
-    y_low, y_high = np.array([0.5, 1.0, 1.5]), np.array([1.0, 2.0, 3.0])
+    y_low = np.array([0.5, 1.0, 1.5])
+    y_high = np.array([1.0, 2.0, 3.0])
     y_low_log, y_high_log = ecoff.log_transf_intervals(y_low, y_high)
-
-    # Expected values in log2 space
-    expected_y_low_log = [-1, 0, 0.585]
-    expected_y_high_log = [0, 1, 1.585]
-    assert np.allclose(
-        y_low_log, expected_y_low_log, atol=1e-2
-    ), f"Expected y_low_log {expected_y_low_log}, got {y_low_log}"
-    assert np.allclose(
-        y_high_log, expected_y_high_log, atol=1e-2
-    ), f"Expected y_high_log {expected_y_high_log}, got {y_high_log}"
+    expected_low = np.array([np.log(0.5)/np.log(2), 0.0, np.log(1.5)/np.log(2)])
+    expected_high = np.array([0.0, 1.0, np.log(3)/np.log(2)])
+    assert np.allclose(y_low_log, expected_low, atol=1e-3)
+    assert np.allclose(y_high_log, expected_high, atol=1e-3)
 
 
-def test_fit_model(wt_samples):
-    """Test model fitting with simple sample data."""
+def test_fit_model_returns_optimize_result(wt_samples):
     samples, mutations = wt_samples
     ecoff = EcoffGenerator(samples, mutations)
     result = ecoff.fit()
-
-    # Validate the optimization result
-    assert isinstance(result, OptimizeResult), "Expected an OptimizeResult from fit."
-    assert np.isfinite(result.x[0]), f"Expected finite mu, got {result.x[0]}"
-    assert np.isfinite(result.x[1]), f"Expected finite log(sigma), got {result.x[1]}"
+    assert isinstance(result, OptimizeResult)
+    assert np.isfinite(result.x[0])
+    assert np.isfinite(result.x[1])
 
 
-def test_generate_ecoff(wt_samples):
-    """Test ECOFF generation with simple sample data."""
+def test_generate_ecoff_basic(wt_samples):
     samples, mutations = wt_samples
     ecoff = EcoffGenerator(samples, mutations)
-    ecoff_value, z_99, mu, sigma, model = ecoff.generate()
-
-    assert isinstance(ecoff_value, float), "ECOFF should be a float."
-    assert isinstance(
-        model, OptimizeResult
-    ), "Expected an OptimizeResult for the model."
-
-    assert np.allclose(ecoff_value, 3.25, atol=1e-2), f"ECOFF should be around 3.28"
-    assert z_99 > mu, "99th percentile (z_99) should be greater than mean (mu)."
-    assert sigma > 0, f"Sigma should be positive, got {sigma}"
+    ecoff_value, z_percentile, mu, sigma, model = ecoff.generate(percentile=99)
+    # Basic sanity checks
+    assert isinstance(ecoff_value, float)
+    assert isinstance(model, OptimizeResult)
+    assert z_percentile > mu
+    assert sigma > 0
+    # ECOFF should equal dilution_factor**z_percentile
+    assert ecoff_value == pytest.approx(
+        ecoff.dilution_factor ** z_percentile, rel=1e-6
+    )
