@@ -273,22 +273,23 @@ def validate_build_piezo_inputs(
 
 
 def validate_ecoff_inputs(
-    samples, mutations, dilution_factor, censored, tail_dilutions
+    samples, mutations, gWT_definition, dilution_factor, censored, tail_dilutions
 ):
     """Validates inputs for the ECOFF generator initialization."""
 
     assert isinstance(samples, pd.DataFrame), "samples must be a pandas DataFrame."
-    assert isinstance(mutations, pd.DataFrame), "mutations must be a pandas DataFrame."
 
     # Check required columns in samples
     assert all(
         column in samples.columns for column in ["UNIQUEID", "MIC"]
     ), "Input samples must contain columns 'UNIQUEID' and 'MIC'"
 
-    # Check required columns in mutations
-    assert all(
-        column in mutations.columns for column in ["UNIQUEID", "MUTATION"]
-    ), "Input mutations must contain columns 'UNIQUEID' and 'MUTATION'"
+    if gWT_definition is not None:
+        assert isinstance(mutations, pd.DataFrame), "mutations must be a pandas DataFrame."
+        assert gWT_definition in ['test1', 'ERJ2022'], 'only test1 and ERJ2022 gWT protocols are implemented'
+        assert all(
+            column in mutations.columns for column in ["UNIQUEID", "MUTATION"]
+        ), "Input mutations must contain columns 'UNIQUEID' and 'MUTATION'"
 
     # Validate dilution_factor
     assert (
