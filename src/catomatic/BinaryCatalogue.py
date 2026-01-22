@@ -1,9 +1,10 @@
 import os
 import json
 import piezo
-import argparse
 import numpy as np
 import pandas as pd
+from typing import Any, Optional, Tuple, List, Callable, Literal, MutableMapping, cast
+from pathlib import Path
 from .PiezoTools import PiezoExporter
 from .defence_module import validate_binary_init, validate_binary_build_inputs
 from scipy.stats import norm, binomtest, fisher_exact
@@ -34,22 +35,51 @@ class BinaryBuilder(PiezoExporter):
 
     """
 
+    samples: pd.DataFrame
+    mutations: pd.DataFrame
+    catalogue: dict[str, dict]
+    entry: list[str]
+    temp_ids: list[str]
+    run_iter: bool
+    seed: Optional[list] = None
+    record_ids: bool
+    min_count: int
+    test: Optional[Literal["Binomial", "Fisher"]]
+    background: Optional[float]
+    p: float
+    tails: Literal["one", "two"]
+    strict_unlock: bool
+    Contingency = List[List[int]]
+
     def __init__(
         self,
-        samples,
-        mutations,
-        FRS=None,
-        seed=None,
-    ):
+        samples: pd.DataFrame | str,
+        mutations: pd.DataFrame | str,
+        frs: Optional[float] = None,
+        seed: Optional[list] = None,
+    ) -> None:
+        """
+        Initialize the builder with sample and mutation tables.
+
+        Args:
+            samples: DataFrame or path to CSV with columns ['UNIQUEID', 'PHENOTYPE'].
+            mutations: DataFrame or path to CSV with columns ['UNIQUEID', 'MUTATION'] and optional 'FRS'.
+            frs: Optional FRS threshold to filter mutation rows.
+            seed: Optional list of seeded mutations to pre-add.
+
+        Returns:
+            None
+        """
+
         samples = pd.read_csv(samples) if isinstance(samples, str) else samples
         mutations = pd.read_csv(mutations) if isinstance(mutations, str) else mutations
 
         # Run the validation function
-        validate_binary_init(samples, mutations, seed, FRS)
+        validate_binary_init(samples, mutations, seed, frs)
 
-        if FRS:
+        if frs:
             # Apply fraction read support thresholds to mutations to filter out irrelevant variants
-            mutations = mutations[(mutations.FRS >= FRS)]
+            mutations = mutations[(mutations.FRS >= frs)]
 
         self.samples = samples
         self.mutations = mutations
@@ -63,31 +93,31 @@ class BinaryBuilder(PiezoExporter):
 
     def build(
         self,
-        test=None,
-        background=None,
-        p=0.95,
-        tails="two",
-        strict_unlock=False,
-        record_ids=False,
-    ):
+        test: Optional[Literal["Binomial", "Fisher"]] = None,
+        background: Optional[float] = None,
+        p: float = 0.95,
+        min_count: int = 0,
+        tails: Literal["one", "two"] = "two",
+        strict_unlock: bool = False,
+        record_ids: bool = False,
+    ) -> "BinaryBuilder":
         """
+
+        Orchestrate catalogue construction and classification.
+
         Args:
-        test (str, optional): Type of statistical test to run for phenotyping. None (doesn't phenotype)
-                                vs binomial (against a defined background) vs Fisher (against contingency
-                                background). Defaults to none.
+            test: 'Binomial', 'Fisher', or None for no hypothesis testing.
+            background: Background rate for binomial test (required if test == 'Binomial').
+            p: Confidence parameter (default 0.95).
+            min_count: Minimum samples required to consider a mutation.
+            tails: 'one' or 'two' tailed test.
+            strict_unlock: If True, requires statisitcal significance to classify 'S' iteratively (otherwise homogeneity suffices).
+            record_ids: If True, include sample UNIQUEIDs in evidence objects.
 
-        background (float, optional): Background rate between 0-1 for binomial test phenotyping. Deafults to None.
+        Returns:
+            self: The built BinaryBuilder instance
+        """
 
-        p (float, optional): Significance level at which to reject the null hypothesis during statistical testing.
-                             Defaults to 0.95.
-        tails (str, optional): Whether to run a 1-tailed or 2-tailed test. Defaults to 'two'.
-        strict_unlock (bool, optional): If strict_unlock is true,  statistical significance in the direction of
-                                        susceptiblity will be required for S classifications. If false, homogenous
-                                        susceptiblity is sufficient for S classifcations. Defaults to False
-        record_ids (bool, optional): If true, will track identifiers to which the mutations belong and were extracted
-                                        from - helpful for detailed interrogation, but gives long evidence objects.
-                                        Defaults to False"""
-        
         validate_binary_build_inputs(test, background, p, tails, record_ids)
 
         self.test = test
@@ -95,8 +125,9 @@ class BinaryBuilder(PiezoExporter):
         self.strict_unlock = strict_unlock
         self.p = 1 - p
         self.tails = tails
+        self.min_count = min_count
         self.record_ids = record_ids
-                
+
         if self.seed is not None:
             # If there are seeded variants, hardcode them now
             for i in self.seed:
@@ -109,21 +140,20 @@ class BinaryBuilder(PiezoExporter):
         # If no more susceptible solos, classify all R and U solos in one, final sweep
         self.classify(self.samples, self.mutations)
 
+        self.order_catalogue()
+
         return self
 
-    def classify(self, samples, mutations):
+    def classify(self, samples: pd.DataFrame, mutations: pd.DataFrame) -> None:
         """
-        Classifies susceptible mutations by extracting samples with only 1 mutation, and iterates through
-        the pooled mutations to determine whether there is statistical evidence for susceptibility, for each
-        unique mutation type.
+        Orchestrate one classification iteration over exposed 'solo' mutations.
 
-        Parameters:
-            samples (pd.DataFrame): A DataFrame containing sample identifiers along with a binary
-                                    'R' vs 'S' phenotype for each sample.
-                                    Required columns: ['UNIQUEID', 'PHENOTYPE']
+        Args:
+            samples: Samples DataFrame with columns ['UNIQUEID', 'PHENOTYPE'].
+            mutations: Mutations DataFrame with columns ['UNIQUEID', 'MUTATION'].
 
-            mutations (pd.DataFrame): A DataFrame containing mutations in relevant genes for each sample.
-                                    Required columns: ['UNIQUEID', 'MUTATION']
+        Returns:
+            None
         """
 
         # remove mutations predicted as susceptible from df (to potentially proffer additional, effective solos)
@@ -143,36 +173,59 @@ class BinaryBuilder(PiezoExporter):
 
         classified = len(self.catalogue)
 
-        # for each non-synonymous mutation type
         for mut in solos[(~solos.MUTATION.isna())].MUTATION.unique():
-            # build a contingency table
-            x, ids = self.build_contingency(solos, mut)
-            # temporarily store mutation groups:
-            self.temp_ids = ids
-            # classify susceptible variants according to specified test mode
-            if self.test is None:
-                self.skeleton_build(mut, x)
-            elif self.test == "Binomial":
-                self.binomial_build(mut, x)
-            elif self.test == "Fisher":
-                self.fishers_build(mut, x)
+
+            self._process_solos(solos, mut)
 
         if len(self.catalogue) == classified:
-            # there may be susceptible solos, but if none pass the test, it can get jammed
+            # there may be susceptible solos, but if none pass the statistical test, it can get jammed
             self.run_iter = False
 
-    def skeleton_build(self, mutation, x):
+    def _process_solos(self, solos: pd.DataFrame, mut: str) -> None:
         """
-        Calculates proportion of resistance with confidence intervals. Does not test nor
-        phenotype. Assumes suscepitble solos display homogenous susceptibility.
+        Send a mutation's solos to the correct classifier.
 
-        Parameters:
-            mutation (str): mutation identifier
-            x table (list): [[R count, S count],[background R, background S]]
+        Args:
+            solos: DataFrame of solo occurrences
+            mut: the mutation identifier
+
+        Returns:
+            None
+        """
+
+        # Skip mutations with fewer than min_count samples
+        if solos[solos.MUTATION == mut].shape[0] < self.min_count:
+            return
+        # build a contingency table
+        x, ids = self.build_contingency(solos, mut)
+        # temporarily store mutation groups:
+        self.temp_ids = ids
+
+        # classify susceptible variants according to specified test mode
+        if self.test is None:
+            self.skeleton_build(mut, x)
+        elif self.test == "Binomial":
+            self.binomial_build(mut, x)
+        elif self.test == "Fisher":
+            self.fishers_build(mut, x)
+        else:
+            raise ValueError(f"Unknown test mode: {self.test}")
+
+    def skeleton_build(self, mutation: str, x: Contingency) -> None:
+        """
+        Record descriptive statistics and optionally mark susceptible solos.
+        Calls homogenous susceptible S.
+
+        Args:
+            mutation: Mutation identifier.
+            x: [[R_count, S_count], [background_R, background_S]].
+
+        Returns:
+            None
         """
 
         proportion = self.calc_proportion(x)
-        ci = self.calc_confidenceInterval(x)
+        ci = self.calc_confidence_interval(x)
 
         data = {"proportion": proportion, "confidence": ci, "contingency": x}
 
@@ -185,30 +238,87 @@ class BinaryBuilder(PiezoExporter):
             # not phenotyping, just adding to catalogue
             self.add_mutation(mutation, "U", data)
 
-    def binomial_build(self, mutation, x):
-        """
-        Calculates proportion of resistance, confidence intervals, and phenotypes
-        relative to a defined, assumed background rate using a binomial test.6
+    def binomial_build(self, mutation: str, x: Contingency) -> None:
+        assert self.background is not None, "background must be provided for Binomial test"
+        bg: float = float(self.background)
 
-        Parameters:
-            mutation (str): mutation identifier
-            x (list): contingency table: [[R count, S count],[background R, background S]]
+        # p-value function for binomial
+        def pvalue_fn(x) -> float:
+            hits: int = int(x[0][0])
+            n: int = int(x[0][0] + x[0][1])
+            if self.tails == "one":
+                return float(binomtest(hits, n, bg, alternative="greater").pvalue)
+            return float(binomtest(hits, n, bg, alternative="two-sided").pvalue)
+
+        # susceptible_rule: when p_calc < self.p we also require proportion <= background
+        def susceptible_rule(proportion: float, p_calc: float, x) -> bool:
+            return bool(proportion <= bg)
+
+        # resistant_rule: in final mode, classify R only if proportion > background
+        def resistant_rule(proportion: float, p_calc: float, x) -> bool:
+            return bool(proportion > bg)
+
+        self.hypothesis_test(mutation, x, pvalue_fn, susceptible_rule, resistant_rule)
+
+
+    def fishers_build(self, mutation: str, x: Contingency) -> None:
+        """
+        Classify mutation using Fisher's exact test and directional inference.
+
+        Args:
+            mutation: Mutation identifier.
+            x: [[R_count, S_count], [background_R, background_S]].
+
+        Returns:
+            None
         """
 
+        # p-value function for Fisher
+        def pvalue_fn(x) -> Any:
+            if self.tails == "one":
+                _, p = fisher_exact(x, alternative="greater")
+                return p
+            _, p = fisher_exact(x)
+            return p
+
+        # susceptible_rule: when p_calc < self.p we require odds_ratio <= 1 to call S
+        def susceptible_rule(proportion, p_calc, x) -> bool:
+            odds = self.calc_odds_ratio(x)
+            return odds <= 1
+
+        # resistant_rule: in final mode, classify R only if odds_ratio > 1
+        def resistant_rule(proportion, p_calc, x) -> bool:
+            odds = self.calc_odds_ratio(x)
+            return odds > 1
+
+        self.hypothesis_test(mutation, x, pvalue_fn, susceptible_rule, resistant_rule)
+
+    def hypothesis_test(
+        self,
+        mutation: str,
+        x: Contingency,
+        pvalue_fn: Callable[[Contingency], float],
+        susceptible_rule: Callable[[float, float, Contingency], bool],
+        resistant_rule: Callable[[float, float, Contingency], bool],
+    ) -> None:
+        """
+        Shared decision logic for hypothesis-based classification.
+
+        Args:
+            mutation: Mutation identifier.
+            x: contingency table [[R_count, S_count], [R_no_mut, S_no_mut]].
+            pvalue_fn: Function that returns p-value given contingency `x`.
+            susceptible_rule: Callable deciding when to call 'S' in iterative mode.
+                            Signature: (proportion, p_calc, x) -> bool
+            resistant_rule: Callable deciding when to call 'R' in final (non-iterative)
+                            mode when p_calc < self.p. Signature: (proportion, p_calc, x) -> bool
+
+        Returns:
+            None
+        """
         proportion = self.calc_proportion(x)
-        ci = self.calc_confidenceInterval(x)
-
-        # going to actively classify S - if above specified background (e.g 90%) on iteratrion
-        # this is quite strict - if no difference to background, then logically should be S,
-        # but we are allowing in U classifications to find those mutations on the edge or with
-        # large confidence intervals.
-        hits = x[0][0]
-        n = x[0][0] + x[0][1]
-
-        if self.tails == "one":
-            p_calc = binomtest(hits, n, self.background, alternative="greater").pvalue
-        else:
-            p_calc = binomtest(hits, n, self.background, alternative="two-sided").pvalue
+        ci = self.calc_confidence_interval(x)
+        p_calc = pvalue_fn(x)
 
         data = {
             "proportion": proportion,
@@ -217,122 +327,58 @@ class BinaryBuilder(PiezoExporter):
             "contingency": x,
         }
 
+        # ITERATIVE MODE (we actively try to find susceptibles)
         if self.run_iter:
-            # Check for iterative classification of S variants
             if self.tails == "two":
-                # if two-tailed
+                # two-tailed iterative rules
                 if proportion == 0:
+                    # special-case homogeneous susceptibles
                     if not self.strict_unlock:
-                        # Classify S when  no evidence of resistance and homogeneous S classifications are allowed
                         self.add_mutation(mutation, "S", data)
-                    elif p_calc < self.p:
-                        # Classify as susceptible if statistically S (stricter)
-                        if proportion <= self.background:
-                            self.add_mutation(mutation, "S", data)
-                elif p_calc < self.p:
-                    # Classify as susceptible based on active evaluation and background proportion
-                    if proportion <= self.background:
+                        return
+                    # strict path falls through to p-value based rule
+                    if p_calc < self.p and susceptible_rule(proportion, p_calc, x):
                         self.add_mutation(mutation, "S", data)
-            else:
-                # if one-tailed
-                if p_calc >= self.p:
-                    # Classify susceptible if no evidence of resistance
-                    self.add_mutation(mutation, "S", data)
-        else:
-            if self.tails == "two":
-                # if two-tailed
-                if p_calc < self.p:
-                    # if R, classify resistant
-                    if proportion > self.background:
-                        self.add_mutation(mutation, "R", data)
+                        return
                 else:
-                    # if no difference, classify U
-                    self.add_mutation(mutation, "U", data)
-            else:
-                # if one-tailed
-                if p_calc < self.p:
-                    # Classify resistance if evidence of resistance
-                    self.add_mutation(mutation, "R", data)
-
-    def fishers_build(self, mutation, x):
-        """
-        Determines if theres a statistically significant difference between resistant
-        or susceptible hits and the calculated background rate for that mutation at that iteration,
-        in the direction determined by an odds ratio. Classifies S as statistically different from background,
-        or homogenous susceptibility (becauase [0, 1] p-value > 0.05)
-
-        Parameters:
-            mutation (str): mutation identifier
-            x (list): contingency table [[R count, S count],[background R, background S]]
-        """
-
-        proportion = self.calc_proportion(x)
-        ci = self.calc_confidenceInterval(x)
-
-        if self.tails == "one":
-            _, p_calc = fisher_exact(x, alternative="greater")
-        else:
-            _, p_calc = fisher_exact(x)
-
-        data = {
-            "proportion": proportion,
-            "confidence": ci,
-            "p_value": p_calc,
-            "contingency": x,
-        }
-
-        if self.run_iter:
-            # if iteratively classifing S variants
-            if self.tails == "two":
-                # if two-tailed
-                if proportion == 0:
-                    if not self.strict_unlock:
-                        # Classify S when  no evidence of resistance and homogeneous S classifications are allowed
+                    # non-zero proportion: test p-value and then apply provided rule
+                    if p_calc < self.p and susceptible_rule(proportion, p_calc, x):
                         self.add_mutation(mutation, "S", data)
-                    elif p_calc < self.p:
-                        # if difference and statisitcal significance required for S classiication
-                        odds = self.calc_oddsRatio(x)
-                        # if S, call susceptible
-                        if odds <= 1:
-                            self.add_mutation(mutation, "S", data)
-                elif p_calc < self.p:
-                    # if different from background, calculate OR to determine direction
-                    odds = self.calc_oddsRatio(x)
-                    # if S, call susceptible
-                    if odds <= 1:
-                        self.add_mutation(mutation, "S", data)
+                        return
+
             else:
-                # if one-tailed
+                # one-tailed iterative rule (classify S when there's no evidence of resistance)
                 if p_calc >= self.p:
-                    # Classify susceptible if no evidence of resistance
                     self.add_mutation(mutation, "S", data)
+                    return
 
-        else:
-            if self.tails == "two":
-                # if two-sided
-                if p_calc < self.p:
-                    # calculate OR to determine direction
-                    odds = self.calc_oddsRatio(x)
-                    # if R, call resistant
-                    if odds > 1:
-                        self.add_mutation(mutation, "R", data)
-                # if no difference, call U
-                else:
-                    self.add_mutation(mutation, "U", data)
-            else:
-                # if one-sided
-                if p_calc < self.p:
-                    # if there is evidence of resistance
+        # FINAL (NON-ITERATIVE) MODE: decide R / U
+        if self.tails == "two":
+            if p_calc < self.p:
+                # evidence of difference — ask strategy whether it's R
+                if resistant_rule(proportion, p_calc, x):
                     self.add_mutation(mutation, "R", data)
+                    return
+            # no difference -> unknown
+            self.add_mutation(mutation, "U", data)
+        else:
+            # one-tailed: evidence -> R
+            if p_calc < self.p:
+                self.add_mutation(mutation, "R", data)
 
-    def add_mutation(self, mutation, prediction, evidence):
+    def add_mutation(
+        self, mutation: str, prediction: str, evidence: dict[str, Any]
+    ) -> None:
         """
-        Adds mutation to cataloue object, and indexes to track order.
+        Adds mutation to the catalogue instance, and indexes to track order.
 
-        Parameters:
-            mutation (str): mutaiton to be added
-            prediction (str): phenotype of mutation
-            evidence (any): additional metadata to be added
+        Args:
+            mutation: Mutation identifier.
+            prediction: Phenotype label, e.g., 'R', 'S', or 'U'.
+            evidence: Evidence metadata for the entry.
+
+        Returns:
+            None
         """
         # add ids to catalogue if specified
         if self.record_ids and "seeded" not in evidence:
@@ -342,15 +388,15 @@ class BinaryBuilder(PiezoExporter):
         # record entry once mutation is added
         self.entry.append(mutation)
 
-    def calc_confidenceInterval(self, x):
+    def calc_confidence_interval(self, x: Contingency) -> Tuple[float, float]:
         """
-        Calculates Wilson confidence intervals from the proportion..
+        Compute a Wilson confidence interval for the resistance proportion.
 
-        Parameters:
-            x (list): contingency table [[R count, S count],[background R, background S]]
+        Args:
+            x: [[R_count, S_count], [background_R, background_S]].
 
         Returns:
-        lower, upper (tuple): upper and lower bounds of confidence interval
+            (lower, upper) confidence interval tuple.
         """
 
         z = norm.ppf(1 - self.p / 2)
@@ -368,40 +414,42 @@ class BinaryBuilder(PiezoExporter):
         return (lower, upper)
 
     @staticmethod
-    def build_contingency(solos, mut):
+    def build_contingency(
+        solos: pd.DataFrame, mutation: str
+    ) -> Tuple[list[list[int]], list[str]]:
         """
-        Constructs a contingency table for a specific mutation within a df of solo occurrences.
+        Build contingency counts and return IDs for a given mutation among solos.
 
-        Parameters:
-            solos (pd.DataFrame): df containing solo mutations
-                                Required columns: ['MUTATION', 'PHENOTYPE']
-            mut (str): The specific mutation
+        Args:
+            solos: DataFrame of solo occurrences (one mutation per UNIQUEID).
+            mutation: Mutation identifier.
 
         Returns:
-                [[R count, S count],[background R, background S]]
+            (contingency, ids) where contingency is [[R_count, S_count], [R_no_mut, S_no_mut]] and ids is list of UNIQUEIDs.
         """
 
-        R_count = len(solos[(solos.PHENOTYPE == "R") & (solos.MUTATION == mut)])
-        S_count = len(solos[(solos.PHENOTYPE == "S") & (solos.MUTATION == mut)])
+        R_count = len(solos[(solos.PHENOTYPE == "R") & (solos.MUTATION == mutation)])
+        S_count = len(solos[(solos.PHENOTYPE == "S") & (solos.MUTATION == mutation)])
 
         R_count_no_mut = len(solos[(solos.MUTATION.isna()) & (solos.PHENOTYPE == "R")])
         S_count_no_mut = len(solos[(solos.MUTATION.isna()) & (solos.PHENOTYPE == "S")])
 
-        ids = solos[solos.MUTATION == mut]["UNIQUEID"].tolist()
+        ids = solos[solos.MUTATION == mutation]["UNIQUEID"].tolist()
 
         return [[R_count, S_count], [R_count_no_mut, S_count_no_mut]], ids
 
     @staticmethod
-    def calc_oddsRatio(x):
+    def calc_odds_ratio(x: Contingency) -> float:
         """
-        Calculates odds ratio
+        Compute odds ratio using a 0.5 continuity correction.
 
-        Parameters:
-            x (list): contingency table [[R count, S count],[background R, background S]]
+        Args:
+            x: [[a, b], [c, d]] representing counts.
 
         Returns:
-            Odds ratio.
+            Computed odds ratio (float).
         """
+
         # with continuity correction
         a = x[0][0] + 0.5
         b = x[0][1] + 0.5
@@ -412,32 +460,38 @@ class BinaryBuilder(PiezoExporter):
         return (a * d) / (b * c)
 
     @staticmethod
-    def calc_proportion(x):
+    def calc_proportion(x: Contingency) -> float:
         """
-        Calculates proportion of hits
+        Return the fraction of resistant hits from the primary cell.
 
-        Parameters:
-            x (list): contingency table [[R count, S count],[background R, background S]]
+        Args:
+            x: [[R_count, S_count], ...].
 
         Returns:
-            Fraction of hits.
+            Proportion (float); returns 0.0 if denominator is zero.
         """
 
         return x[0][0] / (x[0][0] + x[0][1])
 
-    def update(self, rules, wildcards=None, replace=False):
+    def update_catalogue(
+        self,
+        rules: dict[str, str],
+        wildcards: Optional[str] = None,
+        replace: bool = False,
+    ) -> "BinaryBuilder":
         """
-        Updates the catalogue with the supplied expert fules, handling both individual and aggregate cases.
+        Updates the catalogue with the supplied expert rules, handling both individual and aggregate cases.
         If the rule is a mutation, then it is either added (if new) or replaces the existing variant. If an
         aggregate rule, then it can be either added (and piezo phenotypes will prioritise lower-level variants),
         or it can replace all variants that fall under that rule
 
-        Parameters:
-            rules (dict): A dictionary mapping rules to phenotypes. {mut:pred}.
-            replace (bool, optional): If True, allows replacement of existing entries. Defaults to False.
+        Args:
+            rules: Mapping of rule -> phenotype (e.g., {'mut': 'R'}).
+            wildcards: Path or mapping of wildcard rules (required if replace True).
+            replace: If True, replace entries that match aggregate rules.
 
         Returns:
-            self: Returns the instance with updated catalogue.
+            The same BinaryBuilder instance (self).
         """
 
         if not os.path.exists("./temp"):
@@ -454,17 +508,28 @@ class BinaryBuilder(PiezoExporter):
                 assert (
                     wildcards is not None
                 ), "wildcards must be supplied if replace is used"
+
                 # write rule in piezo format to temp (need piezo to find vars)
                 if isinstance(wildcards, str):
-                    # if a path is supplied, read from the file
                     with open(wildcards) as f:
-                        wildcards = json.load(f)
-                wildcards[rule] = {"pred": "R", "evid": {}}
+                        wildcards_map = cast(
+                            MutableMapping[str, dict[str, Any]],
+                            json.load(f),
+                        )
+                elif wildcards is None:
+                    wildcards_map = {}
+                else:
+                    wildcards_map = dict(wildcards)
+
+                # --- now it is SAFE to mutate ---
+                wildcards_map[rule] = {"pred": "R", "evid": {}}
                 self.build_piezo(
-                    "", "", "", "temp", wildcards, public=False, json_dumps=True
+                    " ", " ", " ", "temp", wildcards_map, public=False, json_dumps=True
                 ).to_csv("./temp/rule.csv", index=False)
+
                 # read rule back in with piezo
                 piezo_rule = piezo.ResistanceCatalogue("./temp/rule.csv")
+
                 # find variants to be replaced
                 target_vars = {
                     k: v["evid"]
@@ -475,11 +540,13 @@ class BinaryBuilder(PiezoExporter):
                         or (isinstance(predict, dict) and predict.get("temp") == "R")
                     )
                 }
+
                 # remove those to be replaced
                 for k in target_vars.keys():
                     if k in self.entry:
                         self.catalogue.pop(k, None)
                         self.entry.remove(k)
+
                 # clean up
                 os.remove("./temp/rule.csv")
 
@@ -488,24 +555,30 @@ class BinaryBuilder(PiezoExporter):
 
         return self
 
-    def return_catalogue(self, ordered=False):
+    def order_catalogue(self) -> "BinaryBuilder":
         """
-        Public method that returns the catalogue dictionary, sorted either by order of addition.
+        Order the catalogue by insertion
 
         Returns:
-            dict: The catalogue data stored in the instance.
+            self: catalogue builder instance with ordered catalogue
         """
 
         # Return the catalogue sorted by the order in which mutations were added
-        return {key: self.catalogue[key] for key in self.entry if key in self.catalogue}
+        self.catalogue = {
+            key: self.catalogue[key] for key in self.entry if key in self.catalogue
+        }
 
-    def to_json(self, outfile):
+        return self
+
+    def to_json(self, outfile: str | Path) -> None:
         """
-        Exports the catalogue to a JSON file.
+        Write the catalogue to a JSON file.
 
-        Parameters:
-            outfile (str): The path to the output JSON file where the catalogue will be saved.
+        Args:
+            outfile: Path to output JSON file.
+
+        Returns:
+            None
         """
         with open(outfile, "w") as f:
             json.dump(self.catalogue, f, indent=4)
-

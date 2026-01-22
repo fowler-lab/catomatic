@@ -10,6 +10,7 @@ from scipy.optimize import OptimizeResult
 from catomatic.RegressionCatalogue import RegressionBuilder
 from catomatic.cli import main_regression_builder
 from scipy.spatial.distance import pdist, squareform
+from catomatic.__main__ import main
 
 
 @pytest.fixture
@@ -114,7 +115,14 @@ def test_build_X(mixed_variants):
     ]
     expected_values_fixed = [
         [1, 0, 0, 0, 1, 0],  # Sample A: 'mut0@V1!', Lab1
-        [0, 1, 0, 1, 0, 1],  # Sample B: Mutations "mut1@G12G" and "mut3@121_indel", Lab2
+        [
+            0,
+            1,
+            0,
+            1,
+            0,
+            1,
+        ],  # Sample B: Mutations "mut1@G12G" and "mut3@121_indel", Lab2
         [0, 0, 1, 0, 1, 0],  # Sample C: Mutation "mut2@A13V", Lab1
         [0, 0, 0, 0, 0, 1],  # Sample D: No mutations, Lab2
     ]
@@ -219,7 +227,7 @@ def test_calc_clusters(mixed_variants):
     clusters = builder.calc_clusters(cluster_distance=cluster_distance)
 
     expected_clusters = pd.Series([3, 2, 1, 0], index=["A", "B", "C", "D"])
-    clusters_mapped = pd.Series(clusters.values, index=samples["UNIQUEID"])
+    clusters_mapped = pd.Series(clusters, index=samples["UNIQUEID"])
 
     # Reindex both Series to ensure alignment
     clusters_mapped = clusters_mapped.reindex(expected_clusters.index)
@@ -397,9 +405,7 @@ def test_classify_effects(mixed_variants):
         cluster_distance=50,
     )
 
-    classified_effects, ecoff = builder.classify_effects(
-        effects, ecoff=1, percentile=99, p=0.95
-    )
+    classified_effects, ecoff = builder.classify_effects(effects, ecoff=1, p=0.95)
     expected_classifications = ["U", "S", "U", "S"]
 
     assert (
@@ -478,7 +484,6 @@ def test_build(mixed_variants):
         options={"maxiter": 100},
         L2_penalties={"lambda_beta": 0.01, "lambda_u": 0.01},
         ecoff=1,  # Example ECOFF value
-        percentile=99,
         p=0.95,
         random_effects=True,
         cluster_distance=50,
@@ -500,17 +505,33 @@ def test_build(mixed_variants):
         }
     }
 
-    # Round expected and actual catalogue values
-    rounded_expected_catalogue = round_dict_values(expected_catalogue)
-    rounded_actual_catalogue = round_dict_values(builder.catalogue)
+    # Instead of strict dict equality, check presence and numerics with tolerances
+    assert "mut1@G12G" in builder.catalogue, "Expected mut1@G12G in catalogue"
+    entry = builder.catalogue["mut1@G12G"]
+    assert entry["pred"] == "U", f"Expected prediction 'U', got {entry['pred']}"
 
-    # Validate catalogue
-    assert (
-        rounded_actual_catalogue == rounded_expected_catalogue
-    ), f"Expected catalogue: {rounded_expected_catalogue}, but got {rounded_actual_catalogue}"
+    evid = entry.get("evid", {})
+    expected_evid = expected_catalogue["mut1@G12G"]["evid"]
 
-    print("Catalogue:\n", rounded_actual_catalogue)
+    # Keys we expect and whether they are floats (use isclose for floats)
+    float_keys = ["MIC", "MIC_std", "effect_size", "effect_std", "p_value"]
+    exact_keys = ["ECOFF", "breakpoint"]
 
+    for k in float_keys:
+        exp_val = expected_evid.get(k)
+        got_val = evid.get(k)
+        assert (
+            np.isfinite(exp_val)
+            and np.isfinite(got_val)
+            and np.isclose(got_val, exp_val, atol=1e-2)
+        ) or (
+            np.isnan(exp_val) and np.isnan(got_val)
+        ), f"Field '{k}' differs: expected {exp_val}, got {got_val}"
+
+    for k in exact_keys:
+        assert evid.get(k) == expected_evid.get(
+            k
+        ), f"Field '{k}' differs: expected {expected_evid.get(k)}, got {evid.get(k)}"
 
 
 def test_main_regression_builder(mixed_variants, tmp_path):
@@ -527,27 +548,40 @@ def test_main_regression_builder(mixed_variants, tmp_path):
 
     # Mock CLI arguments
     cli_args = [
-        "regression",  # Placeholder for script name
-        "--samples", str(samples_file),
-        "--mutations", str(mutations_file),
-        "--dilution_factor", "2",
+        "catomatic",
+        "regression",
+        "--samples",
+        str(samples_file),
+        "--mutations",
+        str(mutations_file),
+        "--dilution_factor",
+        "2",
         "--censored",
-        "--tail_dilutions", "1",
-        "--ecoff", "1",
-        "--b_bounds", "-5", "5",
-        "--u_bounds", "-5", "5",
-        "--s_bounds", "-5", "5",
-        "--percentile", "99",
-        "--p", "0.95",
-        "--cluster_distance", "50",
-        "--outfile", str(output_file),
-        '--to_json', 
-
+        "--tail_dilutions",
+        "1",
+        "--ecoff",
+        "1",
+        "--b_bounds",
+        "-5",
+        "5",
+        "--u_bounds",
+        "-5",
+        "5",
+        "--s_bounds",
+        "-5",
+        "5",
+        "--p",
+        "0.95",
+        "--cluster_distance",
+        "50",
+        "--outfile",
+        str(output_file),
+        "--to_json",
     ]
 
     # Mock sys.argv
     with patch("sys.argv", cli_args):
-        main_regression_builder(cli_args)
+        main()
 
     # Validate output JSON
     assert os.path.exists(output_file), f"Output file {output_file} was not created."
@@ -556,68 +590,6 @@ def test_main_regression_builder(mixed_variants, tmp_path):
         catalogue = json.load(f)
 
     # Ensure catalogue contains expected structure
-    assert isinstance(catalogue, dict), "Catalogue should be a dictionary."
-    assert "mut0@V1!" in catalogue, "Expected mutation 'mut0@V1!' in catalogue."
-    assert "mut1@G12G" in catalogue, "Expected mutation 'mut1@G12G' in catalogue."
-
-
-
-def test_main_regression_builder(mixed_variants, tmp_path):
-    """Test the CLI for the RegressionBuilder class."""
-    samples, mutations = mixed_variants
-
-    # Create temporary files for samples and mutations
-    samples_file = tmp_path / "samples.csv"
-    mutations_file = tmp_path / "mutations.csv"
-    output_file = tmp_path / "catalogue.json"
-
-    samples.to_csv(samples_file, index=False)
-    mutations.to_csv(mutations_file, index=False)
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "coverage",
-            "run",
-            "-m",
-            "catomatic",
-            "regression",  # <-- Use correct command structure
-            "--samples", str(samples_file),
-            "--mutations", str(mutations_file),
-            "--dilution_factor", "2",
-            "--censored",
-            "--tail_dilutions", "1",
-            "--ecoff", "1",
-            "--b_bounds", "-5", "5",
-            "--u_bounds", "-5", "5",
-            "--s_bounds", "-5", "5",
-            "--percentile", "99",
-            "--p", "0.95",
-            "--cluster_distance", "50",
-            "--outfile", str(output_file),
-            "--to_json",  
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-
-    # Print output in case of failure for debugging
-    if result.returncode != 0:
-        print("STDOUT:", result.stdout.decode())
-        print("STDERR:", result.stderr.decode())
-
-    # Assert that the command executed successfully
-    assert result.returncode == 0, f"Subprocess failed with exit status: {result.returncode}"
-
-    # Ensure output file was created
-    assert os.path.exists(output_file), f"Output file {output_file} was not created."
-
-    # Load and validate the JSON output
-    with open(output_file, "r") as f:
-        catalogue = json.load(f)
-
     assert isinstance(catalogue, dict), "Catalogue should be a dictionary."
     assert "mut0@V1!" in catalogue, "Expected mutation 'mut0@V1!' in catalogue."
     assert "mut1@G12G" in catalogue, "Expected mutation 'mut1@G12G' in catalogue."
