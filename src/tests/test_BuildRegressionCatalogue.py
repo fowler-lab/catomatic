@@ -10,7 +10,7 @@ from scipy.optimize import OptimizeResult
 from catomatic.RegressionCatalogue import RegressionBuilder
 from catomatic.cli import main_regression_builder
 from scipy.spatial.distance import pdist, squareform
-from catomatic.__main__ import main 
+from catomatic.__main__ import main
 
 
 @pytest.fixture
@@ -42,7 +42,6 @@ def test_generate_snps_df(mixed_variants):
 
     mutations["REF"] = ["A", "G", "C", "T"]
     mutations["ALT"] = ["G", "A", "T", "CGG"]
-
 
     builder = RegressionBuilder(samples, mutations)
     snps = builder.generate_snps_df()
@@ -116,7 +115,14 @@ def test_build_X(mixed_variants):
     ]
     expected_values_fixed = [
         [1, 0, 0, 0, 1, 0],  # Sample A: 'mut0@V1!', Lab1
-        [0, 1, 0, 1, 0, 1],  # Sample B: Mutations "mut1@G12G" and "mut3@121_indel", Lab2
+        [
+            0,
+            1,
+            0,
+            1,
+            0,
+            1,
+        ],  # Sample B: Mutations "mut1@G12G" and "mut3@121_indel", Lab2
         [0, 0, 1, 0, 1, 0],  # Sample C: Mutation "mut2@A13V", Lab1
         [0, 0, 0, 0, 0, 1],  # Sample D: No mutations, Lab2
     ]
@@ -399,9 +405,7 @@ def test_classify_effects(mixed_variants):
         cluster_distance=50,
     )
 
-    classified_effects, ecoff = builder.classify_effects(
-        effects, ecoff=1, p=0.95
-    )
+    classified_effects, ecoff = builder.classify_effects(effects, ecoff=1, p=0.95)
     expected_classifications = ["U", "S", "U", "S"]
 
     assert (
@@ -517,13 +521,17 @@ def test_build(mixed_variants):
         exp_val = expected_evid.get(k)
         got_val = evid.get(k)
         assert (
-            np.isfinite(exp_val) and np.isfinite(got_val) and np.isclose(got_val, exp_val, atol=1e-3)
-        ) or (np.isnan(exp_val) and np.isnan(got_val)), f"Field '{k}' differs: expected {exp_val}, got {got_val}"
+            np.isfinite(exp_val)
+            and np.isfinite(got_val)
+            and np.isclose(got_val, exp_val, atol=1e-3)
+        ) or (
+            np.isnan(exp_val) and np.isnan(got_val)
+        ), f"Field '{k}' differs: expected {exp_val}, got {got_val}"
 
     for k in exact_keys:
-        assert evid.get(k) == expected_evid.get(k), f"Field '{k}' differs: expected {expected_evid.get(k)}, got {evid.get(k)}"
-
-
+        assert evid.get(k) == expected_evid.get(
+            k
+        ), f"Field '{k}' differs: expected {expected_evid.get(k)}, got {evid.get(k)}"
 
 
 def test_main_regression_builder(mixed_variants, tmp_path):
@@ -541,21 +549,34 @@ def test_main_regression_builder(mixed_variants, tmp_path):
     # Mock CLI arguments
     cli_args = [
         "catomatic",
-        "regression", 
-        "--samples", str(samples_file),
-        "--mutations", str(mutations_file),
-        "--dilution_factor", "2",
+        "regression",
+        "--samples",
+        str(samples_file),
+        "--mutations",
+        str(mutations_file),
+        "--dilution_factor",
+        "2",
         "--censored",
-        "--tail_dilutions", "1",
-        "--ecoff", "1",
-        "--b_bounds", "-5", "5",
-        "--u_bounds", "-5", "5",
-        "--s_bounds", "-5", "5",
-        "--p", "0.95",
-        "--cluster_distance", "50",
-        "--outfile", str(output_file),
-        '--to_json', 
-
+        "--tail_dilutions",
+        "1",
+        "--ecoff",
+        "1",
+        "--b_bounds",
+        "-5",
+        "5",
+        "--u_bounds",
+        "-5",
+        "5",
+        "--s_bounds",
+        "-5",
+        "5",
+        "--p",
+        "0.95",
+        "--cluster_distance",
+        "50",
+        "--outfile",
+        str(output_file),
+        "--to_json",
     ]
 
     # Mock sys.argv
@@ -572,4 +593,3 @@ def test_main_regression_builder(mixed_variants, tmp_path):
     assert isinstance(catalogue, dict), "Catalogue should be a dictionary."
     assert "mut0@V1!" in catalogue, "Expected mutation 'mut0@V1!' in catalogue."
     assert "mut1@G12G" in catalogue, "Expected mutation 'mut1@G12G' in catalogue."
-

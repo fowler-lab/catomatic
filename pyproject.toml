@@ -36,7 +36,8 @@ dependencies = [
   "scikit-learn",
   "pytest",
   "mypy",
-  "pandas-stubs"
+  "pandas-stubs",
+  "pytest",
 ]
 
 [project.urls]
