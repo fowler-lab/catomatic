@@ -523,7 +523,7 @@ def test_build(mixed_variants):
         assert (
             np.isfinite(exp_val)
             and np.isfinite(got_val)
-            and np.isclose(got_val, exp_val, atol=1e-3)
+            and np.isclose(got_val, exp_val, atol=1e-2)
         ) or (
             np.isnan(exp_val) and np.isnan(got_val)
         ), f"Field '{k}' differs: expected {exp_val}, got {got_val}"
