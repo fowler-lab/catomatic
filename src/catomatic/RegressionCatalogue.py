@@ -638,9 +638,6 @@ class RegressionBuilder(PiezoExporter):
         """
         p = X.shape[1]
 
-        print (model)
-        print ('fuck', model.x)
-
         fixed_effect_coefs = model.x[:p]
 
         columns_to_exclude = (
@@ -661,9 +658,6 @@ class RegressionBuilder(PiezoExporter):
         mutation_effect_coefs = fixed_effect_coefs[
             [X.columns.get_loc(col) for col in mutation_columns]
         ]
-
-        print (mutation_columns)
-        print (mutation_effect_coefs)
 
         effects = pd.DataFrame(
             {
