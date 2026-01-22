@@ -607,6 +607,8 @@ class RegressionBuilder(PiezoExporter):
 
         model = self.fit(X, y_low, y_high, clusters, bounds_, options, L2_penalties)
 
+        print (model.result)
+
         effects = self.extract_effects(model, X, fixed_effects)
 
         return model, effects
@@ -638,7 +640,7 @@ class RegressionBuilder(PiezoExporter):
         """
         p = X.shape[1]
 
-        fixed_effect_coefs = model.x[:p]
+        fixed_effect_coefs = model.result.x[:p]
 
         columns_to_exclude = (
             {
@@ -668,8 +670,8 @@ class RegressionBuilder(PiezoExporter):
         # Convert effect sizes to MIC values (by reversing the log transformation)
         effects["MIC"] = self.dilution_factor ** effects["effect_size"]
 
-        if hasattr(model, "hess_inv"):
-            hess_inv_dense = model.hess_inv.todense()  # Convert to a dense matrix
+        if hasattr(model.result, "hess_inv"):
+            hess_inv_dense = model.result.hess_inv.todense()  # Convert to a dense matrix
             # Extract the diagonal elements corresponding to the fixed effects (log(MIC) scale)
             mutation_indices = [X.columns.get_loc(col) for col in mutation_columns]
             diag = np.diag(np.asarray(hess_inv_dense))
