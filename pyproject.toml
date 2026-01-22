@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "catomatic"
-version = "0.1.9"
+version = "0.2.0"
 description = "A tool for automatically building catalogues of antibiotic resistance-associated variants"
 readme = "README.md"
 # If README.md is markdown, setuptools will pick it up; optionally:
