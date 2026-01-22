@@ -35,6 +35,8 @@ dependencies = [
   "intreg",
   "scikit-learn",
   "pytest",
+  "mypy",
+  "pandas-stubs"
 ]
 
 [project.urls]
