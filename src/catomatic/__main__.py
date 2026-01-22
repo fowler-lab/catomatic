@@ -1,7 +1,5 @@
 import argparse
 from catomatic.cli import (
-    parse_ecoff_generator,
-    main_ecoff_generator,
     parse_binary_builder,
     main_binary_builder,
     parse_regression_builder,
@@ -19,12 +17,6 @@ def main():
     
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # ECOFF Generator
-    ecoff_parser = subparsers.add_parser("ecoff", help="Generate ECOFF values for wild-type samples.")
-    for action in parse_ecoff_generator()._actions:
-        if action.dest != "help":
-            ecoff_parser._add_action(action)
-
     # Binary Catalogue Builder
     binary_parser = subparsers.add_parser("binary", help="Build a catalogue using the binary frequentist approach.")
     for action in parse_binary_builder()._actions:
@@ -40,9 +32,7 @@ def main():
     args = parser.parse_args()
 
     # Pass `args` directly to avoid re-parsing
-    if args.command == "ecoff":
-        main_ecoff_generator(args)
-    elif args.command == "binary":
+    if args.command == "binary":
         main_binary_builder(args)
     elif args.command == "regression":
         main_regression_builder(args)

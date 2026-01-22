@@ -1,0 +1,18 @@
+name: catomatic-test
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - scipy
+  - pytest
+  - scikit-learn
+  - pandas
+  - joblib
+  - pytest-cov
+  - pip
+  - pip:
+      - intreg
+      - piezo
+      - mypy
+      - pandas-stubs

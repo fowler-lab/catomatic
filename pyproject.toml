@@ -1,3 +1,59 @@
 [build-system]
-requires = ["setuptools>=42"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "catomatic"
+version = "0.1.9"
+description = "A tool for automatically building catalogues of antibiotic resistance-associated variants"
+readme = "README.md"
+# If README.md is markdown, setuptools will pick it up; optionally:
+# readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.6"
+license = { text = "MIT" }
+
+authors = [
+  { name = "Dylan Adlard" },
+  { name = "Philip W Fowler", email = "philip.fowler@ndm.ox.ac.uk" }
+]
+
+keywords = [
+  "resistance catalogue",
+  "tuberculosis",
+  "clinical microbiology"
+]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+  "piezo",
+  "numpy",
+  "scipy",
+  "pandas",
+  "intreg",
+  "scikit-learn",
+  "pytest",
+]
+
+[project.urls]
+Homepage = "https://github.com/fowler-lab/catomatic"
+
+# setuptools-specific configuration
+[tool.setuptools]
+# keep package data included (equivalent to include_package_data = True)
+include-package-data = true
+zip-safe = false
+
+# find packages under src/
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[project.scripts]
+catomatic = "catomatic.__main__:main"
+
+

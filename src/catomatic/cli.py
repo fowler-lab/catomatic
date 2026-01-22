@@ -1,94 +1,5 @@
 import argparse
 
-def parse_ecoff_generator():
-    """
-    Parse command-line options for the GenerateEcoff class.
-
-    Returns:
-        argparse.Namespace: Parsed arguments from the command line.
-    """
-    parser = argparse.ArgumentParser(
-        description="Generate ECOFF values for wild-type samples using interval regression."
-    )
-    parser.add_argument(
-        "--samples",
-        required=True,
-        type=str,
-        help="Path to the samples file containing 'UNIQUEID' and 'MIC' columns.",
-    )
-    parser.add_argument(
-        "--mutations",
-        required=True,
-        type=str,
-        help="Path to the mutations file containing 'UNIQUEID' and 'MUTATION' columns.",
-    )
-    parser.add_argument(
-        "--dilution_factor",
-        type=int,
-        default=2,
-        help="The factor for dilution scaling (default: 2 for doubling).",
-    )
-    parser.add_argument(
-        "--censored",
-        action="store_true",
-        help="Flag to indicate if censored data is used (default: False).",
-    )
-    parser.add_argument(
-        "--tail_dilutions",
-        type=int,
-        default=1,
-        help="Number of dilutions to extend for interval tails if uncensored (default: 1).",
-    )
-    parser.add_argument(
-        "--percentile",
-        type=float,
-        default=99,
-        help="The desired percentile for calculating the ECOFF (default: 99).",
-    )
-    parser.add_argument(
-        "--outfile",
-        type=str,
-        help="Optional path to save the ECOFF result to a file.",
-    )
-    return parser
-
-
-def main_ecoff_generator(args):
-    """
-    Main function to execute ECOFF generation from the command line.
-    """
-    from catomatic.Ecoff import EcoffGenerator
-
-    # Instantiate the GenerateEcoff class
-    generator = EcoffGenerator(
-        samples=args.samples,
-        mutations=args.mutations,
-        dilution_factor=args.dilution_factor,
-        censored=args.censored,
-        tail_dilutions=args.tail_dilutions,
-    )
-
-    # Generate ECOFF
-    ecoff, z_percentile, mu, sigma, model = generator.generate(
-        percentile=args.percentile
-    )
-
-    # Display results
-    print(f"ECOFF (Original Scale): {ecoff}")
-    print(f"Percentile (Log Scale): {z_percentile}")
-    print(f"Mean (mu): {mu}")
-    print(f"Standard Deviation (sigma): {sigma}")
-
-    # Optionally save results
-    if args.outfile:
-        with open(args.outfile, "w") as f:
-            f.write(
-                f"ECOFF: {ecoff}\n"
-                f"Percentile (Log Scale): {z_percentile}\n"
-                f"Mean (mu): {mu}\n"
-                f"Standard Deviation (sigma): {sigma}\n"
-                f"Model: {model}\n"
-            )
 
 def parse_binary_builder():
     parser = argparse.ArgumentParser(
@@ -101,7 +12,7 @@ def parse_binary_builder():
         "--mutations", required=True, type=str, help="Path to the mutations file."
     )
     parser.add_argument(
-        "--FRS",
+        "--frs",
         type=float,
         default=None,
         help="Optional: Fraction Read Support threshold.",
@@ -109,8 +20,7 @@ def parse_binary_builder():
     parser.add_argument("--seed", nargs="+", help="Optional: List of seed mutations.")
     parser.add_argument(
         "--test",
-        type=str,
-        choices=[None, "Binomial", "Fisher"],
+        choices=["Binomial", "Fisher"],
         default=None,
         help="Optional: Type of statistical test to run.",
     )
@@ -146,17 +56,34 @@ def parse_binary_builder():
         type=str,
         help="Path to output file for exporting the catalogue. Used with --to_json or --to_piezo.",
     )
-    parser.add_argument("--to_piezo", action="store_true", help="Flag to export catalogue to Piezo format.")
-    parser.add_argument("--genbank_ref", type=str, help="GenBank reference for the catalogue.")
+    parser.add_argument(
+        "--to_piezo",
+        action="store_true",
+        help="Flag to export catalogue to Piezo format.",
+    )
+    parser.add_argument(
+        "--genbank_ref", type=str, help="GenBank reference for the catalogue."
+    )
     parser.add_argument("--catalogue_name", type=str, help="Name of the catalogue.")
     parser.add_argument("--version", type=str, help="Version of the catalogue.")
     parser.add_argument("--drug", type=str, help="Drug associated with the mutations.")
     parser.add_argument("--wildcards", type=str, help="JSON file with wildcard rules.")
-    parser.add_argument("--grammar", type=str, default="GARC1", help="Grammar used in the catalogue.")
-    parser.add_argument("--values", type=str, default="RUS", help="Values used for predictions in the catalogue.")
-    parser.add_argument("--for_piezo", action="store_true",
-                        help="If not planning to use piezo, set to False to avoid placeholder rows being added")
+    parser.add_argument(
+        "--grammar", type=str, default="GARC1", help="Grammar used in the catalogue."
+    )
+    parser.add_argument(
+        "--values",
+        type=str,
+        default="RUS",
+        help="Values used for predictions in the catalogue.",
+    )
+    parser.add_argument(
+        "--for_piezo",
+        action="store_true",
+        help="If not planning to use piezo, set to False to avoid placeholder rows being added",
+    )
     return parser
+
 
 def main_binary_builder(args):
     from catomatic.BinaryCatalogue import BinaryBuilder
@@ -165,7 +92,7 @@ def main_binary_builder(args):
     builder = BinaryBuilder(
         samples=args.samples,
         mutations=args.mutations,
-        FRS=args.FRS,
+        frs=args.frs,
         seed=args.seed,
     )
 
@@ -202,7 +129,7 @@ def parse_regression_builder():
     )
     parser.add_argument(
         "--genes",
-        type=list,
+        nargs="+",
         default=[],
         help="A list of RAV genes. A list must be supplied if non-RAV genes are in the mutations table (ie if clustering snp distances)",
     )
@@ -221,7 +148,7 @@ def parse_regression_builder():
         help="Tail dilutions for uncensored data (default: 1).",
     )
     parser.add_argument(
-        "--FRS",
+        "--frs",
         type=float,
         default=None,
         help="Fraction Read Support threshold (default: None).",
@@ -254,12 +181,6 @@ def parse_regression_builder():
         help="Bounds for sigma.",
     )
     parser.add_argument(
-        "--percentile",
-        type=float,
-        default=99,
-        help="Percentile for ECOFF calculation (default: 99).",
-    )
-    parser.add_argument(
         "--p",
         type=float,
         default=0.95,
@@ -267,8 +188,7 @@ def parse_regression_builder():
     )
     parser.add_argument(
         "--fixed_effects",
-        type=list,
-        default=None,
+        nargs="+",
         help="List of fixed effect column names (default: None).",
     )
     parser.add_argument(
@@ -302,18 +222,35 @@ def parse_regression_builder():
         action="store_true",
         help="Flag to trigger exporting the catalogue to JSON format.",
     )
-    parser.add_argument("--to_piezo", action="store_true", help="Flag to export catalogue to Piezo format.")
-    parser.add_argument("--genbank_ref", type=str, help="GenBank reference for the catalogue.")
+    parser.add_argument(
+        "--to_piezo",
+        action="store_true",
+        help="Flag to export catalogue to Piezo format.",
+    )
+    parser.add_argument(
+        "--genbank_ref", type=str, help="GenBank reference for the catalogue."
+    )
     parser.add_argument("--catalogue_name", type=str, help="Name of the catalogue.")
     parser.add_argument("--version", type=str, help="Version of the catalogue.")
     parser.add_argument("--drug", type=str, help="Drug associated with the mutations.")
     parser.add_argument("--wildcards", type=str, help="JSON file with wildcard rules.")
-    parser.add_argument("--grammar", type=str, default="GARC1", help="Grammar used in the catalogue.")
-    parser.add_argument("--values", type=str, default="RUS", help="Values used for predictions in the catalogue.")
-    parser.add_argument("--for_piezo", action="store_true",
-                        help="If not planning to use piezo, set to False to avoid placeholder rows being added")
-    
+    parser.add_argument(
+        "--grammar", type=str, default="GARC1", help="Grammar used in the catalogue."
+    )
+    parser.add_argument(
+        "--values",
+        type=str,
+        default="RUS",
+        help="Values used for predictions in the catalogue.",
+    )
+    parser.add_argument(
+        "--for_piezo",
+        action="store_true",
+        help="If not planning to use piezo, set to False to avoid placeholder rows being added",
+    )
+
     return parser
+
 
 def main_regression_builder(args):
     """
@@ -329,7 +266,7 @@ def main_regression_builder(args):
         dilution_factor=args.dilution_factor,
         censored=args.censored,
         tail_dilutions=args.tail_dilutions,
-        FRS=args.FRS,
+        frs=args.frs,
     )
 
     builder.build(
@@ -339,7 +276,6 @@ def main_regression_builder(args):
         options=args.options,
         L2_penalties=args.L2_penalties,
         ecoff=args.ecoff,
-        percentile=args.percentile,
         p=args.p,
         fixed_effects=args.fixed_effects,
         random_effects=args.random_effects,
@@ -381,10 +317,10 @@ def main_piezo_exporter(builder, args):
     )
     print("Catalogue exported to Piezo format.")
 
+
 def main_json_exporter(builder, args):
     if not args.outfile:
         print("Please specify an output file with --outfile when using --to_json")
         exit(1)
     builder.to_json(args.outfile)
     print(f"Catalogue exported to {args.outfile}")
-

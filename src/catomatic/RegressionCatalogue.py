@@ -4,13 +4,13 @@ import pandas as pd
 from joblib import Parallel, delayed
 from scipy.sparse import csr_matrix
 from scipy.stats import norm
-from .Ecoff import EcoffGenerator
 from .PiezoTools import PiezoExporter
 from .defence_module import (
     validate_regression_init,
     validate_regression_predict_inputs,
     validate_regression_classify_inputs,
 )
+from typing import Any, Optional, Sequence, Tuple
 from intreg.meintreg import MeIntReg
 from sklearn.cluster import AgglomerativeClustering
 
@@ -19,33 +19,79 @@ class RegressionBuilder(PiezoExporter):
     """
     Builds a mutation catalogue compatible with Piezo in a standardized format.
 
+    Regression labels underpin a distributional modelling approach.
+
     MICs are treated as intervals to fit a regression curve assuming a Gaussian distribution.
+    Instantiation constructs the builder object (sample/mutation tables + configuration), and
+    `build()` orchestrates fitting, effect extraction, and classification into catalogue entries.
+
+    Parameters:
+        samples (pd.DataFrame | str): A DataFrame (or path to CSV) containing sample identifiers and MICs.
+                                      Required columns: ['UNIQUEID', 'MIC'].
+
+        mutations (pd.DataFrame | str): A DataFrame (or path to CSV) containing mutations for each sample.
+                                        Required columns: ['UNIQUEID', 'MUTATION'].
+                                        Optional columns: ['frs', 'REF', 'ALT', 'SNP_ID'].
+
+        genes (list[str], optional): A list of target genes. If supplied, only mutations whose gene component
+                                     (the substring before '@') is in this list are modelled. If non-target
+                                     genes are present in the mutations table and population-structure clustering
+                                     is enabled, this list should be supplied to avoid unintended clustering inputs.
+
+        dilution_factor (int, optional): Base for MIC dilution scaling (default 2; doubling series).
+
+        censored (bool, optional): Whether MIC interval tails are treated as censored (default True).
+                                   If False, intervals are extended by `tail_dilutions`.
+
+        tail_dilutions (int, optional): Number of additional dilutions to extend interval tails when
+                                        `censored` is False.
+
+        frs (float, optional): Fraction read support threshold used to filter mutations (default None).
+                               Note this also affects SNP clustering inputs.
+
+        seed (int, optional): Random seed controlling only the initial parameter generator (default 0).
     """
+
+    samples: pd.DataFrame
+    mutations: pd.DataFrame
+    catalogue: dict[str, dict[str, Any]]
+    entry: list[str]
+
+    genes: list[str]
+    dilution_factor: int
+    censored: bool
+    tail_dilutions: int
+
+    # set during prediction/build
+    target_mutations: pd.DataFrame
+    df: pd.DataFrame
 
     def __init__(
         self,
-        samples,
-        mutations,
-        genes=[],
-        dilution_factor=2,
-        censored=True,
-        tail_dilutions=1,
-        FRS=None,
-        seed=0,
-    ):
+        samples: pd.DataFrame | str,
+        mutations: pd.DataFrame | str,
+        genes: Optional[list[str]] = None,
+        dilution_factor: int = 2,
+        censored: bool = True,
+        tail_dilutions: int = 1,
+        frs: Optional[float] = None,
+        seed: int = 0,
+    ) -> None:
         """
-        Initialize the ECOFF generator with sample and mutation data.
+        Initialize the RegressionBuilder with sample and mutation tables.
 
         Args:
-            samples (DataFrame): DataFrame containing 'UNIQUEID' and 'MIC' columns.
-            mutations (DataFrame): DataFrame containing 'UNIQUEID' and 'MUTATION' columns.
-            genes (list, optional): A list of RAV genes. A list must be supplied if non-RAV
-                genes are in the mutations table (ie if clustering snp distances)
-            dilution_factor (int): The factor for dilution scaling (default is 2 for doubling).
-            censored (bool): Flag to indicate if censored data is used.
-            tail_dilutions (int): Number of dilutions to extend for interval tails if uncensored.
-            FRS: Fraction of read support to filter mutations by (default None).
-            seed: Numpy random seed (only pertains to initial parameter generator)
+            samples: DataFrame or path to CSV with columns ['UNIQUEID', 'MIC'].
+            mutations: DataFrame or path to CSV with columns ['UNIQUEID', 'MUTATION'] and optional metadata columns.
+            genes: Optional list of target genes (see class docstring).
+            dilution_factor: Dilution base used for MIC scaling.
+            censored: Whether censoring is assumed for interval tails.
+            tail_dilutions: Tail extension in dilutions if not censored.
+            frs: Optional fraction read support threshold to filter mutation rows.
+            seed: Random seed (only impacts the initial parameter generator).
+
+        Returns:
+            None
         """
 
         samples = pd.read_csv(samples) if isinstance(samples, str) else samples
@@ -54,21 +100,21 @@ class RegressionBuilder(PiezoExporter):
         validate_regression_init(
             samples,
             mutations,
-            genes,
+            genes or [],
             dilution_factor,
             censored,
             tail_dilutions,
-            FRS,
+            frs,
             seed,
         )
 
-        if FRS is not None:
+        if frs is not None:
             # note this will filter out mutations for clustering as well
-            mutations = mutations[mutations.FRS >= FRS]
+            mutations = mutations[mutations.FRS >= frs]
 
         self.samples, self.mutations = samples, mutations
 
-        self.genes = genes
+        self.genes = genes if genes is not None else []
         self.dilution_factor = dilution_factor
         self.censored = censored
         self.tail_dilutions = tail_dilutions
@@ -78,16 +124,22 @@ class RegressionBuilder(PiezoExporter):
         self.catalogue = {}
         self.entry = []
 
-    def build_X(self, df, fixed_effects=None):
+    def build_X(
+        self,
+        df: pd.DataFrame,
+        fixed_effects: Optional[list[str]] = None,
+    ) -> pd.DataFrame:
         """
         Build a binary mutation matrix X and optionally include fixed effects.
 
+        Mutations are one-hot encoded as columns. If `fixed_effects` are supplied, they appended to X.
+
         Args:
-            df (DataFrame): DataFrame containing mutation data and optionally additional fixed effect columns.
-            fixed_effects (list of str, optional): List of column names in `df` to include as fixed effects. Defaults to None
+            df: DataFrame containing at least ['UNIQUEID', 'MUTATION'] and optionally fixed-effect columns.
+            fixed_effects: Optional list of column names in `df` to include as fixed effects.
 
         Returns:
-            DataFrame: Binary mutation matrix with optional fixed effects appended as additional columns.
+            Binary mutation matrix indexed by UNIQUEID, with optional fixed effects appended.
         """
         ids = df.UNIQUEID.unique()
 
@@ -124,17 +176,15 @@ class RegressionBuilder(PiezoExporter):
         return X
 
     @staticmethod
-    def build_X_sparse(df):
+    def build_X_sparse(df: pd.DataFrame) -> csr_matrix:
         """
-        Build a sparse binary mutation matrix.
+        Build a sparse binary mutation matrix for SNP IDs.
 
         Args:
-            df (DataFrame): DataFrame containing sample identifiers ('UNIQUEID') and
-                            mutation identifiers ('SNP_ID').
+            df: DataFrame containing ['UNIQUEID', 'SNP_ID'].
 
         Returns:
-            csr_matrix: Sparse binary matrix where rows represent unique samples and
-                        columns represent unique mutations
+            Sparse binary matrix where rows are samples and columns are SNP IDs.
         """
 
         ids = df["UNIQUEID"].astype("category")
@@ -153,17 +203,21 @@ class RegressionBuilder(PiezoExporter):
         return X
 
     @staticmethod
-    def hamming_distance(X_sparse, n_jobs=-1, block_size=1000):
+    def hamming_distance(
+        X_sparse: csr_matrix,
+        n_jobs: int = -1,
+        block_size: int = 1000,
+    ) -> np.ndarray:
         """
         Compute pairwise absolute Hamming distance for a sparse binary matrix.
 
         Args:
-            X_sparse (csr_matrix): Sparse binary mutation matrix.
-            n_jobs (int): Number of parallel jobs (-1 uses all available cores).
-            block_size (int): Size of blocks for chunked computation.
+            X_sparse: Sparse binary matrix.
+            n_jobs: Number of parallel jobs (-1 uses all available cores).
+            block_size: Block size for chunked computation.
 
         Returns:
-            ndarray: Pairwise absolute Hamming distance matrix.
+            Pairwise absolute Hamming distance matrix.
         """
         n_samples = X_sparse.shape[0]
         distances = np.zeros((n_samples, n_samples))
@@ -199,12 +253,15 @@ class RegressionBuilder(PiezoExporter):
 
         return distances
 
-    def generate_snps_df(self):
+    def generate_snps_df(self) -> pd.DataFrame:
         """
-        Generate a filtered SNP DataFrame, ensuring a snp_id columns
+        Generate a SNP-only DataFrame suitable for clustering, ensuring a 'SNP_ID' column exists.
+
+        SNP rows are derived from self.mutations by excluding indels/ins/del/LOF/Z markers. If
+        'SNP_ID' is not present, it is constructed from mutation/gene position plus REF/ALT.
 
         Returns:
-            DataFrame: A filtered and processed DataFrame of SNPs.
+            Filtered SNP DataFrame containing a 'SNP_ID' column.
         """
 
         snps = self.mutations[
@@ -228,15 +285,15 @@ class RegressionBuilder(PiezoExporter):
 
         return snps
 
-    def calc_clusters(self, cluster_distance=50):
+    def calc_clusters(self, cluster_distance: int = 50) -> Sequence[int]:
         """
-        Perform agglomerative clustering on a SNP matrix and map clusters back to samples.
+        Perform agglomerative clustering on SNP distances and map clusters back to all samples.
 
         Args:
-            cluster_distance (int): SNP distance threshold for clustering.
+            cluster_distance: SNP distance threshold for clustering.
 
         Returns:
-            ndarray: Cluster labels for all samples in self.samples, ordered by self.samples.UNIQUEID.
+            Series of cluster labels aligned to self.samples.UNIQUEID (0 indicates no SNP data).
         """
         snps = self.generate_snps_df()
 
@@ -262,17 +319,22 @@ class RegressionBuilder(PiezoExporter):
         cluster_map = dict(zip(snps["UNIQUEID"].unique(), clusters))
         clusters = self.samples["UNIQUEID"].map(cluster_map).fillna(0).astype(int)
 
-        return clusters
+        return clusters.tolist()
 
-    def define_intervals(self, df):
+    def define_intervals(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Define MIC intervals based on the dilution factor and censoring settings.
+        Define MIC intervals (low/high) under censoring and dilution rules, then log-transform.
+
+        MIC encoding is expected as strings:
+            - '<=x' left-censored
+            - '>x' right-censored
+            - 'x' exact
 
         Args:
-            df (DataFrame): DataFrame containing MIC data.
+            df: DataFrame containing a 'MIC' column.
 
         Returns:
-            tuple: Log-transformed lower and upper bounds for MIC intervals.
+            (y_low_log, y_high_log) arrays on the log(dilution_factor) scale.
         """
 
         y_low = np.zeros(len(df.MIC))
@@ -300,50 +362,69 @@ class RegressionBuilder(PiezoExporter):
         # Apply log transformation to intervals
         return self.log_transf_intervals(y_low, y_high)
 
-    def log_transf_intervals(self, y_low, y_high):
+    def log_transf_intervals(
+        self,
+        y_low: np.ndarray,
+        y_high: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Apply log transformation to interval bounds with the specified dilution factor.
-
-        Args:
-            y_low (array-like): Lower bounds of the intervals.
-            y_high (array-like): Upper bounds of the intervals.
-
-        Returns:
-            tuple: Log-transformed lower and upper bounds.
+        Apply log transformation to interval bounds using log base = dilution_factor.
         """
+
         log_base = np.log(self.dilution_factor)
 
-        y_low_log = np.log(y_low, where=(y_low > 0)) / log_base
-        y_high_log = np.log(y_high, where=(y_high > 0)) / log_base
+        # Initialize outputs with -inf (correct for log of non-positive lower bounds)
+        y_low_log = np.full_like(y_low, -np.inf, dtype=float)
+        y_high_log = np.full_like(y_high, -np.inf, dtype=float)
+
+        # Compute logs only where valid
+        np.log(y_low, where=(y_low > 0), out=y_low_log)
+        np.log(y_high, where=(y_high > 0), out=y_high_log)
+
+        y_low_log /= log_base
+        y_high_log /= log_base
 
         return y_low_log, y_high_log
 
-    def log_transf_val(self, val):
+
+    def log_transf_val(self, val: float) -> float:
         """
-        Calculate the logarithm of a value using the dilution factor as the base.
+        Log-transform a scalar value using log base = dilution_factor.
 
         Args:
-            val (float): The value to be log-transformed. Must be positive.
+            val: Positive scalar to transform.
 
         Returns:
-            float: The log-transformed value in the specified base (dilution factor).
+            Log-transformed value.
         """
 
         log_base = np.log(self.dilution_factor)
-        return np.log(val) / log_base
+        return float(np.log(val) / log_base)
 
-    def initial_params(self, X, y_low, y_high, clusters):
+    def initial_params(
+        self,
+        X: pd.DataFrame,
+        y_low: np.ndarray,
+        y_high: np.ndarray,
+        clusters: Optional[Sequence[int]],
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
         """
         Generate initial parameters for the regression model.
 
+        Strategy:
+            - Use interval midpoints where finite.
+            - Estimate beta via least squares on the finite subset.
+            - Sample small random initial u (random effects).
+            - Set sigma to log(std(midpoints)).
+
         Args:
-            X (DataFrame): Binary mutation matrix.
-            y_low (array-like): Lower MIC bounds.
-            y_high (array-like): Upper MIC bounds.
-            clusters (array-like): Cluster labels for samples.
+            X: Binary design matrix.
+            y_low: Lower interval bounds (log scale).
+            y_high: Upper interval bounds (log scale).
+            clusters: Cluster labels (or None).
 
         Returns:
-            tuple: Initial beta, u (cluster effects), and sigma parameters.
+            (beta_init, u_init, sigma_init) where sigma_init is on the log scale.
         """
         # Need to think about this a little more carefully - perhaps init params in meintreg could be improved?
         midpoints = (y_low + y_high) / 2.0
@@ -353,7 +434,7 @@ class RegressionBuilder(PiezoExporter):
         # Initial estimate of beta via linear regression
         beta_init = np.linalg.lstsq(X_valid, midpoints_valid, rcond=None)[0]
         # Initial random effects - small non-zero value
-        u_init = np.random.normal(loc=0, scale=0.1, size=len(np.unique(clusters)))
+        u_init = np.random.normal(loc=0, scale=0.1, size=len(np.unique(clusters or [])))
         # sigma - std of valid midpoints
         sigma = np.nanstd(midpoints_valid)
         sigma = np.log(sigma)
@@ -362,28 +443,28 @@ class RegressionBuilder(PiezoExporter):
 
     def fit(
         self,
-        X,
-        y_low,
-        y_high,
-        random_effects=None,
-        bounds=None,
-        options={},
-        L2_penalties={},
-    ):
+        X: pd.DataFrame,
+        y_low: np.ndarray,
+        y_high: np.ndarray,
+        random_effects: Optional[Sequence[int]] = None,
+        bounds: Optional[list[tuple[Optional[float], Optional[float]]]] = None,
+        options: Optional[dict[str, Any]] = None,
+        L2_penalties: Optional[dict[str, Any]] = None,
+    ) -> Any:
         """
-        Fit the regression model to the mutation and MIC interval data.
+        Fit the regression model to mutation and MIC interval data.
 
         Args:
-            X (DataFrame): Binary mutation matrix.
-            y_low (array-like): Lower MIC bounds.
-            y_high (array-like): Upper MIC bounds.
-            random_effects (array-like or None): Cluster labels or None if random effects are not used.
-            bounds: Parameter bounds.
-            options (dict): Options for optimization.
-            L2_penalties (dict): Regularization penalties.
+            X: Binary design matrix.
+            y_low: Lower interval bounds (log scale).
+            y_high: Upper interval bounds (log scale).
+            random_effects: Cluster labels or None if random effects are not used.
+            bounds: Parameter bounds for optimization.
+            options: Options passed to the optimizer.
+            L2_penalties: Regularization settings for MeIntReg.
 
         Returns:
-            MeIntReg: Fitted regression model.
+            Fitted MeIntReg result.
         """
         _b, _u, _s = self.initial_params(X, y_low, y_high, random_effects)
 
@@ -406,22 +487,29 @@ class RegressionBuilder(PiezoExporter):
             )
 
     def iter_tolerances(
-        self, X, y_low, y_high, clusters, initial_params, bounds, L2_penalties
-    ):
+        self,
+        X: pd.DataFrame,
+        y_low: np.ndarray,
+        y_high: np.ndarray,
+        clusters: Optional[Sequence[int]],
+        initial_params: np.ndarray,
+        bounds: Optional[list[tuple[Optional[float], Optional[float]]]],
+        L2_penalties: Optional[dict[str, Any]] = None,
+    ) -> Any:
         """
-        Perform a grid search over optimization tolerances to find a successful fit, with
-        early stopping on succes.
+        Grid search over optimization tolerances to find a successful fit (early stops on success).
 
         Args:
-            X (DataFrame): Binary mutation matrix.
-            y_low (array-like): Lower MIC bounds.
-            y_high (array-like): Upper MIC bounds.
-            clusters (array-like): Cluster labels for each sample.
-            initial_params (array-like): Initial parameter guesses for optimization.
-            bounds (list): Bounds for optimization parameters.
+            X: Binary design matrix.
+            y_low: Lower interval bounds (log scale).
+            y_high: Upper interval bounds (log scale).
+            clusters: Cluster labels or None.
+            initial_params: Initial optimization vector.
+            bounds: Bounds for optimization parameters.
+            L2_penalties: Regularization settings for MeIntReg.
 
         Returns:
-            OptimizeResult: The first successful fit result.
+            First successful optimization result; returns None if all attempts fail.
         """
 
         # may need to reduce maxfun search for speed up.
@@ -448,39 +536,39 @@ class RegressionBuilder(PiezoExporter):
                     },
                     L2_penalties=L2_penalties,
                 )
-                if r.success:
+                if r.result:
                     return r
 
     def predict_effects(
         self,
-        b_bounds=(None, None),
-        u_bounds=(None, None),
-        s_bounds=(None, None),
-        options=None,
-        L2_penalties=None,
-        fixed_effects=None,
-        random_effects=True,
-        cluster_distance=50,
-    ):
+        b_bounds: tuple[Optional[float], Optional[float]] = (None, None),
+        u_bounds: tuple[Optional[float], Optional[float]] = (None, None),
+        s_bounds: tuple[Optional[float], Optional[float]] = (None, None),
+        options: Optional[dict[str, Any]] = None,
+        L2_penalties: Optional[dict[str, Any]] = None,
+        fixed_effects: Optional[list[str]] = None,
+        random_effects: bool = True,
+        cluster_distance: int = 50,
+    ) -> tuple[Any, pd.DataFrame]:
         """
-        Predict mutation effects using the fitted regression model.
+        Fit the regression model and extract per-mutation effects.
 
         Args:
-            b_bounds (tuple or None): Bounds for the fixed effects coefficients (beta).
-            u_bounds (tuple or None): Bounds for the random effects (u).
-            s_bounds (tuple or None): Bounds for the standard deviation parameter (sigma).
-            options (dict or None): Options for scipy minimize.
-            L2_penalties (dict or None): Regularization strengths for fixed and random effects.
-            fixed_effects (list of str, optional): List of fixed effect column names - must exist in samples df. Defaults to None
-            random_effects (bool): Whether to calculate SNP clusters for population structure.
-            cluster_distance (int): Distance threshold for clustering.
+            b_bounds: Bounds for fixed effects coefficients (beta).
+            u_bounds: Bounds for random effects coefficients (u).
+            s_bounds: Bounds for standard deviation parameter (sigma, on log scale).
+            options: Optimizer options.
+            L2_penalties: Regularization settings.
+            fixed_effects: Optional list of fixed-effect column names (must exist in samples df).
+            random_effects: Whether to infer SNP clusters to model population structure.
+            cluster_distance: SNP distance threshold for clustering.
 
         Returns:
-            tuple: Fitted regression model and mutation matrix X.
+            (model, effects) where effects is a DataFrame of mutation effect estimates.
         """
 
         validate_regression_predict_inputs(
-            self.samples.columns,
+            list(self.samples.columns),
             b_bounds,
             u_bounds,
             s_bounds,
@@ -509,42 +597,47 @@ class RegressionBuilder(PiezoExporter):
 
         if random_effects:
             clusters = self.calc_clusters(cluster_distance)
-            u_bounds = [u_bounds] * len(np.unique(clusters))
+            u_bounds_ = [u_bounds] * len(np.unique(clusters))
         else:
             clusters = None
-            u_bounds = []
+            u_bounds_ = []
 
-        b_bounds = [b_bounds] * X.shape[1]
-        bounds = b_bounds + u_bounds + [s_bounds]
+        b_bounds_ = [b_bounds] * X.shape[1]
+        bounds_ = b_bounds_ + u_bounds_ + [s_bounds]
 
-        model = self.fit(X, y_low, y_high, clusters, bounds, options, L2_penalties)
+        model = self.fit(X, y_low, y_high, clusters, bounds_, options, L2_penalties)
 
         effects = self.extract_effects(model, X, fixed_effects)
 
         return model, effects
 
-    def extract_effects(self, model, X, fixed_effects=None):
+    def extract_effects(
+        self,
+        model: Any,
+        X: pd.DataFrame,
+        fixed_effects: Optional[list[str]] = None,
+    ) -> pd.DataFrame:
         """
-        Extract mutation effects from a fitted regression model and calculate their MIC values.
+        Extract mutation effects from a fitted regression model and convert to MIC scale.
+
+        If the fitted model exposes a Hessian inverse, standard errors are estimated and
+        propagated to MIC scale.
 
         Args:
-            model (MeIntReg): The fitted regression model, which contains fixed-effect coefficients
-                and possibly a Hessian inverse matrix for uncertainty estimation.
-            X (DataFrame): Binary mutation matrix with mutations and possibly fixed effects as columns.
-            fixed_effects (list of str, optional): List of fixed effect column names. Defaults to None.
+            model: Fitted MeIntReg result object.
+            X: Design matrix used for fitting.
+            fixed_effects: Optional list of fixed-effect field names (used to exclude one-hot FE columns).
 
         Returns:
-            DataFrame: A DataFrame with the following columns:
-                - "Mutation": Names of the mutations.
-                - "effect_size": The effect size (log-transformed scale).
-                - "effect_std" (optional): The standard deviation of the effect size (log scale),
-                if available from the model.
-                - "MIC": The Minimum Inhibitory Concentration (MIC) calculated by reversing the
-                log transformation.
-                - "MIC_std" (optional): The standard deviation of the MIC, if available.
+            DataFrame with effect estimates:
+                - Mutation
+                - effect_size (log scale)
+                - effect_std (optional)
+                - MIC (original scale)
+                - MIC_std (optional)
         """
         p = X.shape[1]
-        fixed_effect_coefs = model.x[:p]
+        fixed_effect_coefs = model.result.x[:p]
 
         columns_to_exclude = (
             {
@@ -565,6 +658,9 @@ class RegressionBuilder(PiezoExporter):
             [X.columns.get_loc(col) for col in mutation_columns]
         ]
 
+        print (mutation_columns)
+        print (mutation_effect_coefs)
+
         effects = pd.DataFrame(
             {
                 "Mutation": mutation_columns,
@@ -574,11 +670,13 @@ class RegressionBuilder(PiezoExporter):
         # Convert effect sizes to MIC values (by reversing the log transformation)
         effects["MIC"] = self.dilution_factor ** effects["effect_size"]
 
-        if hasattr(model, "hess_inv"):
-            hess_inv_dense = model.hess_inv.todense()  # Convert to a dense matrix
+        if hasattr(model.result, "hess_inv"):
+            hess_inv_dense = model.result.hess_inv.todense()  # Convert to a dense matrix
             # Extract the diagonal elements corresponding to the fixed effects (log(MIC) scale)
             mutation_indices = [X.columns.get_loc(col) for col in mutation_columns]
-            effect_std_log = np.sqrt(np.diag(hess_inv_dense)[mutation_indices])
+            diag = np.diag(np.asarray(hess_inv_dense))
+            idx = np.asarray(mutation_indices, dtype=np.intp)
+            effect_std_log = np.sqrt(diag[idx])
             effects["effect_std"] = effect_std_log
             # Convert standard deviation to MIC scale
             effects["MIC_std"] = (
@@ -593,52 +691,45 @@ class RegressionBuilder(PiezoExporter):
         return effects
 
     @staticmethod
-    def z_test(mu, val, se):
+    def z_test(mu: float, val: float, se: float) -> Any:
         """
-        Perform a z-test to calculate the two-tailed p-value.
+        Compute a two-tailed z-test p-value.
 
         Args:
-            mu (float): The mean value (e.g., observed or estimated mean).
-            val (float): The value to compare against (e.g., hypothesized mean).
-            se (float): The standard error of the mean.
+            mu: Observed/estimated mean.
+            val: Null/reference value.
+            se: Standard error.
 
         Returns:
-            float: The p-value for the two-tailed z-test.
+            Two-tailed p-value.
         """
-
         z = (mu - val) / se
         p_value = 2 * (1 - norm.cdf(abs(z)))
         return p_value
 
-    def classify_effects(self, effects, ecoff=None, percentile=99, p=0.95):
-        """Classify mutation effects as Resistant (R), Susceptible (S), or Undetermined (U) using a Z-test.
+    def classify_effects(
+        self,
+        effects: pd.DataFrame,
+        ecoff: float,
+        p: float = 0.95,
+    ) -> tuple[pd.DataFrame, float]:
+        """
+        Classify mutation effects as Resistant (R), Susceptible (S), or Undetermined (U) using a z-test.
+
+        Effects are classified by comparing effect_size to the (log-space) breakpoint and applying
+        a two-tailed z-test using effect_std.
 
         Args:
-            effects (DataFrame): A DataFrame containing mutation effects with columns
-                'effect_size' and 'effect_std'.
-            ecoff (float, optional): The epidemiological cutoff (ECOFF) value. If None, it will
-                be calculated using the GenerateEcoff method.
-            percentile (int, optional): Percentile used to calculate the ECOFF if ecoff is None
-                (default is 99).
-            p (float, optional): Significance level for statistical testing (default is 0.95).
+            effects: Effects DataFrame with 'effect_size' and 'effect_std'.
+            p: Confidence parameter (default 0.95).
 
         Returns:
-            tuple: A tuple containing:
-                - effects (DataFrame): Updated DataFrame with new 'p_value' and 'Classification' columns.
-                - ecoff (float): The ECOFF value used for classification."""
+            (effects, ecoff) where effects includes 'p_value' and 'Classification'.
+        """
 
-        validate_regression_classify_inputs(ecoff, percentile, p)
+        validate_regression_classify_inputs(ecoff, p)
 
-        if ecoff is None:
-            ecoff, breakpoint, _, _, _ = EcoffGenerator(
-                self.samples,
-                self.target_mutations,
-                dilution_factor=self.dilution_factor,
-                censored=self.censored,
-                tail_dilutions=self.tail_dilutions,
-            ).generate(percentile)
-        else:
-            breakpoint = self.log_transf_val(ecoff)
+        breakpoint = self.log_transf_val(ecoff)
 
         effects["p_value"] = effects.apply(
             lambda row: self.z_test(row["effect_size"], breakpoint, row["effect_std"]),
@@ -656,53 +747,53 @@ class RegressionBuilder(PiezoExporter):
 
         return effects, ecoff
 
-    def add_mutation(self, mutation, prediction, evidence):
+    def add_mutation(
+        self, mutation: str, prediction: str, evidence: dict[str, Any]
+    ) -> None:
         """
-        Adds mutation to cataloue object, and indexes to track order.
+        Add a mutation entry to the catalogue and record insertion order.
 
-        Parameters:
-            mutation (str): mutaiton to be added
-            prediction (str): phenotype of mutation
-            evidence (any): additional metadata to be added
+        Args:
+            mutation: Mutation identifier.
+            prediction: Phenotype label ('R', 'S', or 'U').
+            evidence: Evidence metadata for the entry.
+
+        Returns:
+            None
         """
-
         self.catalogue[mutation] = {"pred": prediction, "evid": evidence}
-        # record entry once mutation is added
         self.entry.append(mutation)
 
     def build(
         self,
-        b_bounds=(None, None),
-        u_bounds=(None, None),
-        s_bounds=(None, None),
-        options=None,
-        L2_penalties=None,
-        ecoff=None,
-        percentile=99,
-        p=0.95,
-        fixed_effects=None,
-        random_effects=True,
-        cluster_distance=50,
-    ):
+        ecoff: float,
+        b_bounds: tuple[Optional[float], Optional[float]] = (None, None),
+        u_bounds: tuple[Optional[float], Optional[float]] = (None, None),
+        s_bounds: tuple[Optional[float], Optional[float]] = (None, None),
+        options: Optional[dict[str, Any]] = None,
+        L2_penalties: Optional[dict[str, Any]] = None,
+        p: float = 0.95,
+        fixed_effects: Optional[list[str]] = None,
+        random_effects: bool = True,
+        cluster_distance: int = 50,
+    ) -> "RegressionBuilder":
         """
-        Constructs a mutation catalogue by predicting mutation effects and classifying them as resistant, susceptible, or undetermined.
-        Uses regression modeling to estimate the effects of mutations on observed MIC values. It classifies mutations based
-        on statistical tests and applies ECOFF thresholds to determine phenotype categories. The results are stored in the catalogue.
+        Orchestrate model fitting, effect extraction, classification, and catalogue construction.
 
         Args:
-            b_bounds (tuple, optional): Bounds for fixed effects coefficients (min, max). Defaults to (None, None).
-            u_bounds (tuple, optional): Bounds for random effects coefficients (min, max). Defaults to (None, None).
-            s_bounds (tuple, optional): Bounds for the standard deviation parameter (min, max). Defaults to (None, None).
-            options (dict, optional): Scipy minimise's ptimization options for the regression fitting. Defaults to None.
-            L2_penalties (dict, optional): Regularization penalties for fixed and random effects. Defaults to None.
-            ecoff (float, optional): Epidemiological cutoff value for classification, in logspace. If None, it will be calculated. Defaults to None.
-            percentile (int/float, optional): Percentile for ECOFF calculation if ecoff is None. Defaults to 99.
-            p (float, optional): Significance level for classification. Defaults to 0.95.
-            fixed_effects (list of str, optional): List of fixed effect column names - column must exist in the samples df. Defaults to None
-            random_effects (bool): Whether to calculate and include random effects (snp distance clusters)
-            cluster_distance (float): v
+            b_bounds: Bounds for fixed effects coefficients (beta).
+            u_bounds: Bounds for random effects coefficients (u).
+            s_bounds: Bounds for standard deviation parameter (sigma, log scale).
+            options: Optimizer options; if None/empty, an internal tolerance grid search is used.
+            L2_penalties: Regularization settings passed to the fitter.
+            ecoff: ECOFF on MIC scale.
+            p: Confidence parameter (default 0.95).
+            fixed_effects: Optional list of fixed-effect columns in samples df.
+            random_effects: Whether to model population structure using SNP clusters.
+            cluster_distance: SNP distance threshold used for clustering (if enabled).
+
         Returns:
-            RegressionBuilder: The instance with the updated mutation catalogue.
+            self: The built RegressionBuilder instance.
         """
         # Predict effects
         _, effects = self.predict_effects(
@@ -717,42 +808,51 @@ class RegressionBuilder(PiezoExporter):
         )
 
         effects, ecoff = self.classify_effects(
-            effects, ecoff=ecoff, percentile=percentile, p=p
+            effects, ecoff=ecoff, p=p
         )
 
-        def add_mutation_from_row(row):
-            evidence = {
-                "MIC": row["MIC"],
-                "MIC_std": row["MIC_std"],
-                "ECOFF": ecoff,
-                "effect_size": row["effect_size"],
-                "effect_std": row["effect_std"],
-                "breakpoint": self.log_transf_val(ecoff),
-                "p_value": row["p_value"],
-            }
-            self.add_mutation(row["Mutation"], row["Classification"], evidence)
+        breakpoint = self.log_transf_val(ecoff)
 
-        effects.apply(add_mutation_from_row, axis=1)
+        def add_mutation_from_row(row: pd.Series) -> None:
+            evidence: dict[str, Any] = {
+                "MIC": row.get("MIC"),
+                "ECOFF": ecoff,
+                "effect_size": row.get("effect_size"),
+                "breakpoint": breakpoint,
+                "p_value": row.get("p_value"),
+            }
+            # Only attach std fields if present.
+            if "MIC_std" in row:
+                evidence["MIC_std"] = row.get("MIC_std")
+            if "effect_std" in row:
+                evidence["effect_std"] = row.get("effect_std")
+
+            self.add_mutation(str(row["Mutation"]), str(row["Classification"]), evidence)
+
+        for _, row in effects.iterrows():
+            add_mutation_from_row(row)
 
         return self
 
-    def return_catalogue(self):
+    def return_catalogue(self) -> dict[str, dict[str, Any]]:
         """
-        Public method that returns the catalogue dictionary.
+        Return the catalogue ordered by insertion.
 
         Returns:
-            dict: The catalogue data stored in the instance.
+            Ordered catalogue mapping mutation -> {'pred': ..., 'evid': ...}.
         """
 
         return {key: self.catalogue[key] for key in self.entry if key in self.catalogue}
 
-    def to_json(self, outfile):
+    def to_json(self, outfile: str) -> None:
         """
-        Exports the catalogue to a JSON file.
+        Export the catalogue to a JSON file.
 
-        Parameters:
-            outfile (str): The path to the output JSON file where the catalogue will be saved.
+        Args:
+            outfile: Path to output JSON file.
+
+        Returns:
+            None
         """
         with open(outfile, "w") as f:
             json.dump(self.catalogue, f, indent=4)
-

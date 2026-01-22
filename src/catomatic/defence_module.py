@@ -1,308 +1,376 @@
-import os
-import pandas as pd
+from __future__ import annotations
+
 import warnings
+from pathlib import Path
+from typing import Any, Mapping, Optional, Sequence, Literal, List
+
+import pandas as pd
 
 
-def soft_assert(condition, message="Warning!"):
+TestMode = Optional[Literal["Binomial", "Fisher"]]
+Tails = Literal["one", "two"]
+
+
+def soft_assert(
+    condition: bool,
+    message: str = "Warning!",
+    *,
+    category: type[Warning] = UserWarning,
+) -> None:
     """
-    Issues a warning if the condition is not met.
+    Emit a warning if a condition is not met.
+
+    Args:
+        condition: Condition to evaluate.
+        message: Warning message if condition is False.
+        category: Warning class to emit (defaults to UserWarning).
+
+    Returns:
+        None
     """
     if not condition:
-        warnings.warn(message, stacklevel=2)
+        warnings.warn(message, category=category, stacklevel=2)
+
+
+def _require_columns(df: pd.DataFrame, required: Sequence[str], *, name: str) -> None:
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"{name} must contain columns {list(required)}; missing {missing}."
+        )
+
+
+def _require_unique(df: pd.DataFrame, column: str, *, name: str) -> None:
+    if df[column].nunique(dropna=False) != len(df[column]):
+        raise ValueError(f"{name} must have unique values in column '{column}'.")
 
 
 def validate_binary_init(
-    samples,
-    mutations,
-    seed,
-    FRS,
-):
-    # Check samples and mutations dataframes
-    assert all(
-        column in samples.columns for column in ["UNIQUEID", "PHENOTYPE"]
-    ), "Input df must contain columns UNIQUEID and PHENOTYPE"
+    samples: pd.DataFrame,
+    mutations: pd.DataFrame,
+    seed: Optional[list[str]],
+    frs: Optional[float],
+) -> None:
+    """
+    Validate inputs for BinaryBuilder.__init__.
 
-    assert all(
-        column in mutations.columns for column in ["UNIQUEID", "MUTATION"]
-    ), "Input df must contain columns UNIQUEID and MUTATION"
+    Args:
+        samples: DataFrame with ['UNIQUEID', 'PHENOTYPE'].
+        mutations: DataFrame with ['UNIQUEID', 'MUTATION'] and optional 'FRS'.
+        seed: Optional list of seeded mutations.
+        frs: Optional FRS threshold.
 
-    assert samples.UNIQUEID.nunique() == len(
-        samples.UNIQUEID
-    ), "Each sample should have only 1 phenotype"
+    Returns:
+        None
+    """
+    _require_columns(samples, ["UNIQUEID", "PHENOTYPE"], name="samples")
+    _require_columns(mutations, ["UNIQUEID", "MUTATION"], name="mutations")
 
-    assert all(
-        i in ["R", "S"] for i in samples.PHENOTYPE
-    ), "Binary phenotype values must either be R or S"
+    _require_unique(samples, "UNIQUEID", name="samples")
 
-    assert (
-        len(pd.merge(samples, mutations, on=["UNIQUEID"], how="left")) > 0
-    ), "No UNIQUEIDs for mutations match UNIQUEIDs for samples!"
+    if not set(samples["PHENOTYPE"]).issubset({"R", "S"}):
+        raise ValueError("Binary phenotype values must be either 'R' or 'S'.")
+
+    if pd.merge(
+        samples[["UNIQUEID"]], mutations[["UNIQUEID"]], on="UNIQUEID", how="inner"
+    ).empty:
+        raise ValueError("No UNIQUEIDs for mutations match UNIQUEIDs for samples.")
 
     if seed is not None:
-        assert isinstance(
-            seed, list
-        ), "The 'seed' parameter must be a list of neutral (susceptible) mutations."
+        if not isinstance(seed, list) or not all(isinstance(s, str) for s in seed):
+            raise TypeError(
+                "seed must be a list[str] of neutral (susceptible) mutations."
+            )
         soft_assert(
-            all(s in mutations.MUTATION.values for s in seed),
-            "Not all seeds are represented in mutations table, are you sure the grammar is correct?",
+            all(s in set(mutations["MUTATION"]) for s in seed),
+            "Not all seeds are represented in mutations table; confirm grammar and mutation identifiers.",
         )
 
-    if FRS is not None:
-        assert isinstance(FRS, float), "FRS must be a float"
-        assert (
-            "FRS" in mutations.columns
-        ), 'The mutations df must contain an "FRS" column to filter by FRS'
+    if frs is not None:
+        if not isinstance(frs, float):
+            raise TypeError("frs must be a float.")
+        _require_columns(mutations, ["FRS"], name="mutations")
 
 
 def validate_binary_build_inputs(
-    test,
-    background,
-    p,
-    tails,
-    record_ids,
-):
+    test: TestMode,
+    background: Optional[float],
+    p: float,
+    tails: Tails,
+    record_ids: bool,
+) -> None:
     """
-    Validates the input parameters and raises errors or warnings as necessary.
+    Validate inputs for BinaryBuilder.build.
+
+    Args:
+        test: 'Binomial', 'Fisher', or None.
+        background: Background resistance rate for binomial test.
+        p: Confidence parameter (0 < p < 1); builder typically uses 1 - p internally.
+        tails: 'one' or 'two'.
+        record_ids: Whether to store UNIQUEIDs in evidence records.
+
+    Returns:
+        None
     """
+    if not isinstance(record_ids, bool):
+        raise TypeError("record_ids must be a bool.")
 
-    assert isinstance(record_ids, bool), "record_ids parameter must be of type bool."
+    if test not in (None, "Binomial", "Fisher"):
+        raise ValueError("test must be None, 'Binomial', or 'Fisher'.")
 
-    if test is not None:
-        assert test in [
-            None,
-            "Binomial",
-            "Fisher",
-        ], "The test must be None, Binomial or Fisher"
-        if test == "Binomial":
-            assert background is not None and isinstance(
-                background, float
-            ), "If using a binomial test, an assumed background resistance rate (0-1) must be specified"
-            assert p < 1, "The p value for statistical testing must be 0 < p < 1"
-        elif test == "Fisher":
-            assert p < 1, "The p value for statistical testing must be 0 < p < 1"
+    if not isinstance(p, (int, float)) or not (0 < p < 1):
+        raise ValueError("p must satisfy 0 < p < 1.")
 
-        assert isinstance(tails, str) and tails in [
-            "two",
-            "one",
-        ], "tails must either be 'one' or 'two'"
+    if tails not in ("one", "two"):
+        raise ValueError("tails must be either 'one' or 'two'.")
+
+    if test == "Binomial":
+        if background is None or not isinstance(background, (int, float)):
+            raise TypeError(
+                "background must be supplied as a float if test == 'Binomial'."
+            )
+        if not (0 <= float(background) <= 1):
+            raise ValueError("background must be in [0, 1].")
 
 
 def validate_regression_init(
-    samples,
-    mutations,
-    genes,
-    dilution_factor,
-    censored,
-    tail_dilutions,
-    FRS,
-    seed,
-):
-    # Check samples and mutations dataframes
-    assert all(
-        column in samples.columns for column in ["UNIQUEID", "MIC"]
-    ), "Input df must contain columns UNIQUEID and MIC"
+    samples: pd.DataFrame,
+    mutations: pd.DataFrame,
+    genes: List[str],
+    dilution_factor: float,
+    censored: bool,
+    tail_dilutions: int,
+    frs: Optional[float],
+    seed: int,
+) -> None:
+    """
+    Validate inputs for RegressionBuilder.__init__.
 
-    assert all(
-        column in mutations.columns for column in ["UNIQUEID", "MUTATION"]
-    ), "Input df must contain columns UNIQUEID and MUTATION"
+    Args:
+        samples: DataFrame with ['UNIQUEID', 'MIC'].
+        mutations: DataFrame with ['UNIQUEID', 'MUTATION'] and optional 'FRS'.
+        genes: Target gene list; if non-empty, mutations must overlap.
+        dilution_factor: Positive scaling base.
+        censored: Whether MIC data are censored at extremes.
+        tail_dilutions: Tail extension in dilutions when not censored.
+        frs: Optional threshold.
+        seed: Random seed for initialisation.
 
-    assert samples.UNIQUEID.nunique() == len(
-        samples.UNIQUEID
-    ), "Each sample should have only 1 MIC reading"
+    Returns:
+        None
+    """
+    _require_columns(samples, ["UNIQUEID", "MIC"], name="samples")
+    _require_columns(mutations, ["UNIQUEID", "MUTATION"], name="mutations")
+
+    _require_unique(samples, "UNIQUEID", name="samples")
+
+    if samples["MIC"].isna().any():
+        raise ValueError("MIC column contains NaN values.")
+
+    if not isinstance(dilution_factor, (int, float)) or dilution_factor <= 0:
+        raise ValueError("dilution_factor must be a positive number.")
+
+    if not isinstance(censored, bool):
+        raise TypeError("censored must be a bool.")
+
+    if not isinstance(tail_dilutions, int) or tail_dilutions < 0:
+        raise ValueError("tail_dilutions must be a non-negative integer.")
+
+    if frs is not None:
+        if not isinstance(frs, (int, float)):
+            raise TypeError("frs must be numeric.")
+        _require_columns(mutations, ["FRS"], name="mutations")
+
+    if samples.empty:
+        raise ValueError("samples must not be empty.")
+
+    if not set(mutations["UNIQUEID"]).issubset(set(samples["UNIQUEID"])):
+        raise ValueError("All UNIQUEID values in mutations must exist in samples.")
+
+    if not isinstance(seed, int):
+        raise TypeError("seed must be an int.")
 
     if len(genes) > 0:
-        # Ensure element-wise splitting of 'MUTATION' column
-        assert any(
-            mutations["MUTATION"].str.split("@").str[0].isin(genes)
-        ), "No mutations match the specified genes."
+        if not all(isinstance(g, str) for g in genes):
+            raise TypeError("genes must be a sequence of strings.")
+        # Ensure MUTATION is string-like for splitting
+        if not pd.api.types.is_string_dtype(mutations["MUTATION"]):
+            raise TypeError(
+                "mutations['MUTATION'] must be string-like when genes are provided."
+            )
+        gene_part = mutations["MUTATION"].astype(str).str.split("@").str[0]
+        if not gene_part.isin(list(genes)).any():
+            raise ValueError("No mutations match the specified genes.")
 
-    assert samples["MIC"].notna().all(), "MIC column contains NaN values."
 
-    assert isinstance(
-        dilution_factor, (int, float)
-    ), "Dilution factor must be an integer or float."
-    assert dilution_factor > 0, "Dilution factor must be greater than zero."
-
-    assert isinstance(
-        censored, bool
-    ), "Censored must be a boolean value (True or False)."
-
-    assert isinstance(tail_dilutions, int), "Tail dilutions must be an integer."
-    assert tail_dilutions >= 0, "Tail dilutions must be zero or a positive integer."
-
-    if FRS is not None:
-        assert isinstance(FRS, (int, float)), "FRS must be a float or integer."
-        assert (
-            "FRS" in mutations.columns
-        ), 'The mutations DataFrame must contain an "FRS" column to use FRS filtering.'
-
-    assert not samples.empty, "Samples DataFrame must not be empty."
-
-    assert set(mutations["UNIQUEID"]).issubset(
-        set(samples["UNIQUEID"])
-    ), "All UNIQUEID values in mutations must exist in samples."
-
-    assert isinstance(seed, int), "The random seed must be an integer"
-
+from typing import Any, Mapping, Optional, Sequence, Tuple, List
 
 def validate_regression_predict_inputs(
-    columns,
-    b_bounds,
-    u_bounds,
-    s_bounds,
-    options,
-    L2_penalties,
-    fixed_effects,
-    random_effects,
-    cluster_distance,
-    genes,
-):
-    for bounds, name in zip(
-        [b_bounds, u_bounds, s_bounds], ["b_bounds", "u_bounds", "s_bounds"]
-    ):
-        if bounds is not None:
-            assert (
-                isinstance(bounds, (tuple, list)) and len(bounds) == 2
-            ), f"{name} must be a tuple with two elements (min, max)."
-            assert all(
-                x is None or isinstance(x, (int, float)) for x in bounds
-            ), f"{name} must contain only numeric values or None."
-            if all(x is not None for x in bounds):
-                assert (
-                    bounds[0] <= bounds[1]
-                ), f"Invalid range in {name}: min cannot be greater than max."
+    columns: Sequence[str],
+    b_bounds: Tuple[Optional[float], Optional[float]],
+    u_bounds: Tuple[Optional[float], Optional[float]],
+    s_bounds: Tuple[Optional[float], Optional[float]],
+    options: Optional[Mapping[str, Any]],
+    L2_penalties: Optional[Mapping[str, Any]],
+    fixed_effects: Optional[Sequence[str]],
+    random_effects: bool,
+    cluster_distance: int,
+    genes: Sequence[str],
+) -> None:
+    """
+    Validate inputs for RegressionBuilder.predict_effects.
 
-    if options is not None:
-        assert isinstance(
-            options, dict
-        ), "Options must be a dictionary of scipy minimise arguments."
+    Args:
+        columns: samples df columns.
+        b_bounds/u_bounds/s_bounds: (min, max) bounds, each element numeric or None.
+        options: Optimizer options mapping.
+        L2_penalties: Regularization mapping.
+        fixed_effects: Optional list of fixed-effect columns that must be in `columns`.
+        random_effects: Whether clustering is enabled.
+        cluster_distance: Positive int distance threshold.
+        genes: Required if random_effects is True.
+
+    Returns:
+        None
+    """
+
+    for bounds, name in (
+        (b_bounds, "b_bounds"),
+        (u_bounds, "u_bounds"),
+        (s_bounds, "s_bounds"),
+    ):
+        # Ensure shape/type
+        if not (isinstance(bounds, (tuple, list)) and len(bounds) == 2):
+            raise TypeError(f"{name} must be a (min, max) tuple.")
+        # Ensure elements are numeric or None
+        if not all(x is None or isinstance(x, (int, float)) for x in bounds):
+            raise TypeError(f"{name} must contain only numeric values or None.")
+
+        lo, hi = bounds 
+        if (lo is not None) and (hi is not None):
+            if lo > hi:
+                raise ValueError(f"Invalid range in {name}: min cannot be greater than max.")
+
+    if options is not None and not isinstance(options, Mapping):
+        raise TypeError("options must be a mapping of optimizer arguments.")
 
     if L2_penalties is not None:
-        assert isinstance(L2_penalties, dict), "L2_penalties must be a dictionary."
+        if not isinstance(L2_penalties, Mapping):
+            raise TypeError("L2_penalties must be a mapping.")
         valid_keys = {"lambda_beta", "lambda_u", "lambda_sigma"}
-        assert set(L2_penalties.keys()).issubset(
-            valid_keys
-        ), f"L2_penalties keys must be a subset of {valid_keys}."
+        if not set(L2_penalties.keys()).issubset(valid_keys):
+            raise ValueError(f"L2_penalties keys must be a subset of {valid_keys}.")
         for key, value in L2_penalties.items():
-            assert isinstance(
-                value, (int, float)
-            ), f"{key} in L2_penalties must be numeric."
-            assert value >= 0, f"{key} in L2_penalties must be non-negative."
+            if not isinstance(value, (int, float)):
+                raise TypeError(f"{key} in L2_penalties must be numeric.")
+            if value < 0:
+                raise ValueError(f"{key} in L2_penalties must be non-negative.")
 
-    assert isinstance(
-        random_effects, bool
-    ), "Random effects must be a boolean value (True or False)."
+    if not isinstance(random_effects, bool):
+        raise TypeError("random_effects must be a bool.")
 
     if random_effects:
-        assert len(genes) > 0, (
-            "If calculating random effect SNP distance clusters, "
-            "must instantiate with a whole genome mutations table (for clustering), "
-            "and a list of RAV genes to filter this by (for regression)"
-        )
-        assert (
-            isinstance(cluster_distance, int) and cluster_distance > 0
-        ), "Cluster distance must be a number greater than 0."
+        if len(genes) == 0:
+            raise ValueError(
+                "If random_effects is True, genes must be provided (RAV genes for regression; "
+                "whole-genome mutations required for clustering)."
+            )
+        if not isinstance(cluster_distance, int) or cluster_distance <= 0:
+            raise ValueError("cluster_distance must be a positive integer.")
 
     if fixed_effects is not None:
-        assert isinstance(
-            fixed_effects, list
-        ), "Fixed effects must be a list of column names"
-        assert all(fe in columns for fe in fixed_effects), "One or more fixed effects do not exist in input data"
-
+        if not isinstance(fixed_effects, (list, tuple)):
+            raise TypeError("fixed_effects must be a sequence of column names.")
+        missing = [fe for fe in fixed_effects if fe not in columns]
+        if missing:
+            raise ValueError(
+                f"One or more fixed effects do not exist in input data: {missing}."
+            )
 
 
 def validate_regression_classify_inputs(
-    ecoff,
-    percentile,
-    p,
-):
+    ecoff: float,
+    p: float,
+) -> None:
+    """
+    Validate inputs for regression effect classification.
 
-    if ecoff is not None:
-        assert isinstance(ecoff, (int, float)), "ECOFF must be a numeric value."
-        assert ecoff > 0, "ECOFF must be a positive value."
+    Args:
+        ecoff:  ECOFF (MIC scale).
+        p: Confidence parameter (0 < p < 1).
 
-    assert isinstance(percentile, (int, float)), "Percentile must be numeric."
-    assert 0 < percentile <= 100, "Percentile must be between 1 and 100."
+    Returns:
+        None
+    """
 
-    assert isinstance(p, (int, float)), "Significance level (p) must be numeric."
-    assert 0 < p < 1, "Significance level (p) must be between 0 and 1."
+    if not isinstance(ecoff, (int, float)):
+        raise TypeError("ecoff must be numeric.")
+    if ecoff <= 0:
+        raise ValueError("ecoff must be positive.")
+
+    if not isinstance(p, (int, float)) or not (0 < p < 1):
+        raise ValueError("p must satisfy 0 < p < 1.")
 
 
 def validate_build_piezo_inputs(
-    genbank_ref,
-    catalogue_name,
-    version,
-    drug,
-    wildcards,
-    grammar,
-    values,
-    public,
-    for_piezo,
-    json_dumps,
-    include_U,
-):
+    genbank_ref: str,
+    catalogue_name: str,
+    version: str,
+    drug: str,
+    wildcards: Mapping[str, Any] | str | Path,
+    grammar: str,
+    values: str,
+    public: bool,
+    for_piezo: bool,
+    json_dumps: bool,
+    include_U: bool,
+) -> None:
     """
-    Validates inputs for the build_piezo method to ensure they meet the expected types and values.
+    Validate inputs for PiezoExporter.build_piezo.
+
+    Args:
+        genbank_ref: GenBank reference identifier.
+        catalogue_name: Catalogue name.
+        version: Catalogue version.
+        drug: Drug.
+        wildcards: Mapping or a path to JSON.
+        grammar: Must be 'GARC1'.
+        values: Must be 'RUS'.
+        public: Public/export mode.
+        for_piezo: Whether to add placeholders.
+        json_dumps: Whether to JSON encode evidence columns.
+        include_U: Whether to include non-placeholder 'U' entries.
+
+    Returns:
+        None
     """
-    # Check string inputs
-    assert isinstance(genbank_ref, str), "genbank_ref must be a string."
-    assert isinstance(catalogue_name, str), "catalogue_name must be a string."
-    assert isinstance(version, str), "version must be a string."
-    assert isinstance(drug, str), "drug must be a string."
+    for s, name in (
+        (genbank_ref, "genbank_ref"),
+        (catalogue_name, "catalogue_name"),
+        (version, "version"),
+        (drug, "drug"),
+    ):
+        if not isinstance(s, str) or not s:
+            raise TypeError(f"{name} must be a non-empty string.")
 
-    # Check wildcards: should be dict or a valid file path
-    assert isinstance(
-        wildcards, (dict, str)
-    ), "wildcards must be a dict or a file path (str)."
-    if isinstance(wildcards, str):
-        assert os.path.exists(
-            wildcards
-        ), "If wildcards is a file path, the file must exist."
+    if isinstance(wildcards, (str, Path)):
+        path = Path(wildcards)
+        if not path.exists():
+            raise FileNotFoundError("If wildcards is a file path, the file must exist.")
+    elif not isinstance(wildcards, Mapping):
+        raise TypeError("wildcards must be a mapping or a file path.")
 
-    # Check grammar
-    assert grammar in ["GARC1"], "Only 'GARC1' grammar is currently supported."
+    if grammar != "GARC1":
+        raise ValueError("Only 'GARC1' grammar is currently supported.")
 
-    # Check values
-    assert values == "RUS", "Only 'RUS' values are currently supported."
+    if values != "RUS":
+        raise ValueError("Only 'RUS' values are currently supported.")
 
-    # Check boolean inputs
-    assert isinstance(public, bool), "public must be a boolean."
-    assert isinstance(for_piezo, bool), "for_piezo must be a boolean."
-    assert isinstance(json_dumps, bool), "json_dumps must be a boolean."
-    assert isinstance(include_U, bool), "include_U must be a boolean."
-
-
-def validate_ecoff_inputs(
-    samples, mutations, gWT_definition, dilution_factor, censored, tail_dilutions
-):
-    """Validates inputs for the ECOFF generator initialization."""
-
-    assert isinstance(samples, pd.DataFrame), "samples must be a pandas DataFrame."
-
-    # Check required columns in samples
-    assert all(
-        column in samples.columns for column in ["UNIQUEID", "MIC"]
-    ), "Input samples must contain columns 'UNIQUEID' and 'MIC'"
-
-    if gWT_definition is not None:
-        assert isinstance(mutations, pd.DataFrame), "mutations must be a pandas DataFrame."
-        assert gWT_definition in ['test1', 'ERJ2022'], 'only test1 and ERJ2022 gWT protocols are implemented'
-        assert all(
-            column in mutations.columns for column in ["UNIQUEID", "MUTATION"]
-        ), "Input mutations must contain columns 'UNIQUEID' and 'MUTATION'"
-
-    # Validate dilution_factor
-    assert (
-        isinstance(dilution_factor, int) and dilution_factor > 0
-    ), "dilution_factor must be a positive integer."
-
-    # Validate censored flag
-    assert isinstance(
-        censored, bool
-    ), "censored must be a boolean value (True or False)."
-
-    # Validate tail_dilutions if censored is False
-    if not censored:
-        assert (
-            isinstance(tail_dilutions, int) and tail_dilutions > 0
-        ), "When censored is False, tail_dilutions must be a positive integer or specified."
+    for b, name in (
+        (public, "public"),
+        (for_piezo, "for_piezo"),
+        (json_dumps, "json_dumps"),
+        (include_U, "include_U"),
+    ):
+        if not isinstance(b, bool):
+            raise TypeError(f"{name} must be a bool.")
