@@ -127,15 +127,15 @@ def test_add_mutation(builder):
     assert builder.catalogue[mutation]["evid"] == evidence
 
 
-def test_build_contingency(solo_data):
+def test_build_solo_contingency(solo_data):
     # for R + S
-    x_mut1 = BinaryBuilder.build_contingency(solo_data, "gene@A1S")[0]
+    x_mut1 = BinaryBuilder.build_solo_contingency(solo_data, "gene@A1S")[0]
     assert x_mut1 == [[1, 1], [3, 1]]
     # for R
-    x_mut2 = BinaryBuilder.build_contingency(solo_data, "gene@A2S")[0]
+    x_mut2 = BinaryBuilder.build_solo_contingency(solo_data, "gene@A2S")[0]
     assert x_mut2 == [[0, 1], [3, 1]]
     # For non-existent mutation - although should be filtered out beforehand
-    x_mut4 = BinaryBuilder.build_contingency(solo_data, "gene@A4S")[0]
+    x_mut4 = BinaryBuilder.build_solo_contingency(solo_data, "gene@A4S")[0]
     assert x_mut4 == [[0, 0], [3, 1]]
 
 
@@ -149,7 +149,7 @@ def test_calc_proportion():
     for x, expected in x_tests:
         assert (
             BinaryBuilder.calc_proportion(x) == expected
-        ), f"Failed for contingency {x}"
+        ), f"Failed for solo_contingency {x}"
 
 
 def test_calc_odds_ratio():
@@ -162,7 +162,7 @@ def test_calc_odds_ratio():
     for x, expected in x_tests:
         assert (
             BinaryBuilder.calc_odds_ratio(x) == expected
-        ), f"Failed for contingency {x}"
+        ), f"Failed for solo_contingency {x}"
 
 
 @pytest.mark.parametrize("builder", [{"p": 0.95}], indirect=True)
@@ -178,7 +178,7 @@ def test_calc_confidence_interval(builder):
         ci = builder.calc_confidence_interval(x)
         ci = [round(ci[0], 4), round(ci[1], 4)]
 
-        assert ci == expected, f"Failed for contingency {x}"
+        assert ci == expected, f"Failed for solo_contingency {x}"
 
 
 @pytest.mark.parametrize("builder", [{"p": 0.95}], indirect=True)
@@ -188,8 +188,9 @@ def test_skeleton_build(builder):
     # now test addition when run_iter = False
     mutation = "mut4"
     x = [[27, 21], [3, 22]]
+    full_x = [[0, 0], [0,0]]
 
-    builder.skeleton_build(mutation, x)
+    builder.skeleton_build(mutation, x, full_x)
     # check its actually been added
     assert mutation in builder.catalogue
     # check if the correct phenotype has been added
@@ -198,7 +199,8 @@ def test_skeleton_build(builder):
     expected_e = {
         "proportion": builder.calc_proportion(x),
         "confidence": builder.calc_confidence_interval(x),
-        "contingency": x,
+        "solo_contingency": x,
+        "contingency": full_x,
     }
 
     assert builder.catalogue[mutation]["evid"] == expected_e
@@ -218,6 +220,7 @@ def test_binomial_build_RU(builder):
         ([[27, 21], [3, 22]], "R"),
         ([[5, 21], [3, 22]], "U"),
     ]
+    full_x = [[0, 0], [0, 0]]
 
     for mut in range(len(mutations)):
         mutation = mutations[mut]
@@ -232,20 +235,21 @@ def test_binomial_build_RU(builder):
             "proportion": builder.calc_proportion(x),
             "confidence": builder.calc_confidence_interval(x),
             "p_value": p_expected,
-            "contingency": x,
+            "solo_contingency": x,
+            "contingency": full_x
         }
 
-        builder.binomial_build(mutation, x)
+        builder.binomial_build(mutation, x, full_x)
         # make sure mutaiton was added
-        assert mutation in builder.catalogue, f"Failed for contingency {x}"
+        assert mutation in builder.catalogue, f"Failed for solo_contingency {x}"
         # make sure phenotype was determined correclty
         assert (
             builder.catalogue[mutation]["pred"] == phenotype
-        ), f"Failed for contingency {x}"
+        ), f"Failed for solo_contingency {x}"
         # make sure evidence was added correclty
         assert (
             builder.catalogue[mutation]["evid"] == expected_e
-        ), f"Failed for contingency {x}"
+        ), f"Failed for solo_contingency {x}"
 
         # fyi haven't tested entire decision tree for run_iter=True, but they're are almost identical
 
@@ -264,6 +268,7 @@ def test_fisher_build_RU(builder):
         ([[27, 21], [3, 22]], "R"),
         ([[5, 21], [3, 22]], "U"),
     ]
+    full_x = [[0, 0], [0, 0]]
 
     for mut in range(len(mutations)):
         mutation = mutations[mut]
@@ -276,20 +281,21 @@ def test_fisher_build_RU(builder):
             "proportion": builder.calc_proportion(x),
             "confidence": builder.calc_confidence_interval(x),
             "p_value": p_expected,
-            "contingency": x,
+            "solo_contingency": x,
+            "contingency": full_x
         }
 
-        builder.fishers_build(mutation, x)
+        builder.fishers_build(mutation, x, full_x)
         # make sure mutaiton was added
-        assert mutation in builder.catalogue, f"Failed for contingency {x}"
+        assert mutation in builder.catalogue, f"Failed for solo_contingency {x}"
         # make sure phenotype was determined correclty
         assert (
             builder.catalogue[mutation]["pred"] == phenotype
-        ), f"Failed for contingency {x}"
+        ), f"Failed for solo_contingency {x}"
         # make sure evidence was added correclty
         assert (
             builder.catalogue[mutation]["evid"] == expected_e
-        ), f"Failed for contingency {x}"
+        ), f"Failed for solo_contingency {x}"
 
 
 # the S tests below are conceptually more complex than the RU tests, as these use the
