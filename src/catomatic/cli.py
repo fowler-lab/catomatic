@@ -1,4 +1,5 @@
 import argparse
+import json
 
 
 def parse_binary_builder():
@@ -156,8 +157,8 @@ def parse_regression_builder():
     parser.add_argument(
         "--ecoff",
         type=float,
-        default=None,
-        help="Epidemiological cutoff value for classification. If None, it will be calculated",
+        required=True,
+        help="Epidemiological cutoff value for classification.",
     )
     parser.add_argument(
         "--b_bounds",
@@ -198,24 +199,24 @@ def parse_regression_builder():
     )
     parser.add_argument(
         "--cluster_distance",
-        type=float,
-        default=1,
-        help="Clustering distance threshold (default: 1).",
+        type=int,
+        default=50,
+        help="SNP distance threshold for clustering (default: 50).",
     )
     parser.add_argument(
         "--outfile", type=str, required=False, help="Path to save the output JSON file."
     )
     parser.add_argument(
-        "--options",
-        type=dict,
-        default=None,
-        help="Scipy minimise's ptimization options for the regression fitting.",
-    )
-    parser.add_argument(
         "--L2_penalties",
-        type=dict,
+        type=json.loads,
         default=None,
         help="Regularization penalties for fixed and random effects",
+    )
+    parser.add_argument(
+        "--options",
+        type=json.loads,
+        default=None,
+        help="Scipy minimise's ptimization options for the regression fitting.",
     )
     parser.add_argument(
         "--to_json",

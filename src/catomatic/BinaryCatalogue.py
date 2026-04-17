@@ -27,7 +27,7 @@ class BinaryBuilder(PiezoExporter):
                                   Required columns: ['UNIQUEID', 'MUTATION']
                                   Optional columns: ['FRS']
 
-        FRS (float, optional): The Fraction Read Support threshold used to construct the catalogues.
+        frs (float, optional): The Fraction Read Support threshold used to construct the catalogues.
                                Lower FRS values allow for greater genotype heterogeneity.
 
         seed (list) optional): A list of predefined GARC neutral mutations with associated phenotypes
@@ -140,9 +140,35 @@ class BinaryBuilder(PiezoExporter):
         # If no more susceptible solos, classify all R and U solos in one, final sweep
         self.classify(self.samples, self.mutations)
 
+        # add in rows for mutations without solos
+        # self.add_missing()
+
         self.order_catalogue()
 
         return self
+
+    def add_missing(self):
+
+        # add in remaining mutations
+        all_muts = set(self.mutations.MUTATION.dropna().unique())
+        classified_muts = set(self.catalogue.keys())
+        missing = all_muts - classified_muts
+
+        for mut in missing:
+            full_x = self.build_full_contingency(self.samples, self.mutations, mut)
+
+            proportion = self.calc_proportion(full_x)
+            ci = self.calc_confidence_interval(full_x)
+
+            data = {
+                "proportion": proportion,
+                "confidence": ci,
+                "full_contingency": full_x,
+                "solo_contingency": None,  # explicitly absent
+                "note": "No solo evidence; added post hoc",
+            }
+
+            self.add_mutation(mut, "U", data)
 
     def classify(self, samples: pd.DataFrame, mutations: pd.DataFrame) -> None:
         """
@@ -196,22 +222,26 @@ class BinaryBuilder(PiezoExporter):
         # Skip mutations with fewer than min_count samples
         if solos[solos.MUTATION == mut].shape[0] < self.min_count:
             return
-        # build a contingency table
-        x, ids = self.build_contingency(solos, mut)
+        # build a contingency table for solo mutations
+        x, ids = self.build_solo_contingency(solos, mut)
+        # build a contingency table for all observations
+        full_x = self.build_full_contingency(self.samples, self.mutations, mut)
         # temporarily store mutation groups:
         self.temp_ids = ids
 
         # classify susceptible variants according to specified test mode
         if self.test is None:
-            self.skeleton_build(mut, x)
+            self.skeleton_build(mut, x, full_x)
         elif self.test == "Binomial":
-            self.binomial_build(mut, x)
+            self.binomial_build(mut, x, full_x)
         elif self.test == "Fisher":
-            self.fishers_build(mut, x)
+            self.fishers_build(mut, x, full_x)
         else:
             raise ValueError(f"Unknown test mode: {self.test}")
 
-    def skeleton_build(self, mutation: str, x: Contingency) -> None:
+    def skeleton_build(
+        self, mutation: str, x: Contingency, full_x: Contingency
+    ) -> None:
         """
         Record descriptive statistics and optionally mark susceptible solos.
         Calls homogenous susceptible S.
@@ -227,7 +257,12 @@ class BinaryBuilder(PiezoExporter):
         proportion = self.calc_proportion(x)
         ci = self.calc_confidence_interval(x)
 
-        data = {"proportion": proportion, "confidence": ci, "contingency": x}
+        data = {
+            "proportion": proportion,
+            "confidence": ci,
+            "solo_contingency": x,
+            "contingency": full_x,
+        }
 
         if self.run_iter:
             # if iteratively classifing S variants
@@ -238,8 +273,12 @@ class BinaryBuilder(PiezoExporter):
             # not phenotyping, just adding to catalogue
             self.add_mutation(mutation, "U", data)
 
-    def binomial_build(self, mutation: str, x: Contingency) -> None:
-        assert self.background is not None, "background must be provided for Binomial test"
+    def binomial_build(
+        self, mutation: str, x: Contingency, full_x: Contingency
+    ) -> None:
+        assert (
+            self.background is not None
+        ), "background must be provided for Binomial test"
         bg: float = float(self.background)
 
         # p-value function for binomial
@@ -258,10 +297,11 @@ class BinaryBuilder(PiezoExporter):
         def resistant_rule(proportion: float, p_calc: float, x) -> bool:
             return bool(proportion > bg)
 
-        self.hypothesis_test(mutation, x, pvalue_fn, susceptible_rule, resistant_rule)
+        self.hypothesis_test(
+            mutation, x, full_x, pvalue_fn, susceptible_rule, resistant_rule
+        )
 
-
-    def fishers_build(self, mutation: str, x: Contingency) -> None:
+    def fishers_build(self, mutation: str, x: Contingency, full_x: Contingency) -> None:
         """
         Classify mutation using Fisher's exact test and directional inference.
 
@@ -291,12 +331,15 @@ class BinaryBuilder(PiezoExporter):
             odds = self.calc_odds_ratio(x)
             return odds > 1
 
-        self.hypothesis_test(mutation, x, pvalue_fn, susceptible_rule, resistant_rule)
+        self.hypothesis_test(
+            mutation, x, full_x, pvalue_fn, susceptible_rule, resistant_rule
+        )
 
     def hypothesis_test(
         self,
         mutation: str,
         x: Contingency,
+        full_x: Contingency,
         pvalue_fn: Callable[[Contingency], float],
         susceptible_rule: Callable[[float, float, Contingency], bool],
         resistant_rule: Callable[[float, float, Contingency], bool],
@@ -324,7 +367,8 @@ class BinaryBuilder(PiezoExporter):
             "proportion": proportion,
             "confidence": ci,
             "p_value": p_calc,
-            "contingency": x,
+            "solo_contingency": x,  # solo-based (classification)
+            "contingency": full_x,  #         (descriptive only)
         }
 
         # ITERATIVE MODE (we actively try to find susceptibles)
@@ -414,7 +458,7 @@ class BinaryBuilder(PiezoExporter):
         return (lower, upper)
 
     @staticmethod
-    def build_contingency(
+    def build_solo_contingency(
         solos: pd.DataFrame, mutation: str
     ) -> Tuple[list[list[int]], list[str]]:
         """
@@ -437,6 +481,30 @@ class BinaryBuilder(PiezoExporter):
         ids = solos[solos.MUTATION == mutation]["UNIQUEID"].tolist()
 
         return [[R_count, S_count], [R_count_no_mut, S_count_no_mut]], ids
+
+    @staticmethod
+    def build_full_contingency(
+        samples: pd.DataFrame, mutations: pd.DataFrame, mutation: str
+    ) -> list[list[int]]:
+        """
+        Full contingency using ALL samples (sample-level, not row-level).
+        """
+
+        # determine which samples have the mutation
+        mut_present = mutations[mutations.MUTATION == mutation][
+            "UNIQUEID"
+        ].drop_duplicates()
+
+        df = samples.copy()
+        df["has_mut"] = df["UNIQUEID"].isin(mut_present)
+
+        R_with = ((df.PHENOTYPE == "R") & (df.has_mut)).sum()
+        S_with = ((df.PHENOTYPE == "S") & (df.has_mut)).sum()
+
+        R_without = ((df.PHENOTYPE == "R") & (~df.has_mut)).sum()
+        S_without = ((df.PHENOTYPE == "S") & (~df.has_mut)).sum()
+
+        return [[int(R_with), int(S_with)], [int(R_without), int(S_without)]]
 
     @staticmethod
     def calc_odds_ratio(x: Contingency) -> float:
