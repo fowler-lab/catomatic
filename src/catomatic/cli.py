@@ -132,7 +132,7 @@ def parse_regression_builder():
         "--genes",
         nargs="+",
         default=[],
-        help="A list of RAV genes. A list must be supplied if non-RAV genes are in the mutations table (ie if clustering snp distances)",
+        help="A list of RAV genes. A list must be supplied if non-RAV genes are in the mutations table (ie if clustering snp distances, which may use many more genes)",
     )
     parser.add_argument(
         "--dilution_factor", type=int, default=2, help="Dilution factor (default: 2)."

@@ -188,7 +188,7 @@ class RegressionBuilder(PiezoExporter):
                     fixed_effects_data,
                     columns=fixed_effects,
                     prefix=fixed_effects,  # Prefix helps to distinguish columns
-                    drop_first=False,
+                    drop_first=True,
                 )
                 .reindex(ids, fill_value=0)
                 .astype(int)
@@ -293,7 +293,7 @@ class RegressionBuilder(PiezoExporter):
 
         snps = self.mutations[
             ~self.mutations["MUTATION"].str.contains(
-                r"(?:indel|ins|del|Z|LOF)", regex=True
+                r"(?:indel|ins|del|Z|LOF|HAP|phylo|interaction)", regex=True
             )
         ].copy()
 
@@ -379,19 +379,23 @@ class RegressionBuilder(PiezoExporter):
         if not self.censored:
             tail_dilution_factor = self.dilution_factor**self.tail_dilutions
 
+        def parse_mic_value(mic: str) -> float:
+            #if a fraction (ie 2 drugs), just keep the numerator
+            return float(mic.split('/')[0])
+
         for i, mic in enumerate(df.MIC):
             if mic.startswith("<="):  # Left-censored
-                lower_bound = float(mic[2:])
+                lower_bound = parse_mic_value(mic[2:])
                 y_low[i] = 1e-6 if self.censored else lower_bound / tail_dilution_factor
                 y_high[i] = lower_bound
             elif mic.startswith(">"):  # Right-censored
-                upper_bound = float(mic[1:])
+                upper_bound = parse_mic_value(mic[1:])
                 y_low[i] = upper_bound
                 y_high[i] = (
                     np.inf if self.censored else upper_bound * tail_dilution_factor
                 )
             else:  # Exact MIC value
-                mic_value = float(mic)
+                mic_value = parse_mic_value(mic)
                 y_low[i] = mic_value / self.dilution_factor
                 y_high[i] = mic_value
 
@@ -443,15 +447,15 @@ class RegressionBuilder(PiezoExporter):
         y_low: np.ndarray,
         y_high: np.ndarray,
         clusters: Optional[Sequence[int]],
-    ) -> Tuple[np.ndarray, np.ndarray, float]:
+    ) -> Tuple[np.ndarray, float, float]:
         """
-        Generate initial Args for the regression model.
+        Generate initial parameters for the regression model.
 
         Strategy:
             - Use interval midpoints where finite.
             - Estimate beta via least squares on the finite subset.
-            - Sample small random initial u (random effects).
             - Set sigma to log(std(midpoints)).
+            - Set tau to an initial random-effect SD of 0.5.
 
         Args:
             X: Binary design matrix.
@@ -460,23 +464,24 @@ class RegressionBuilder(PiezoExporter):
             clusters: Cluster labels (or None).
 
         Returns:
-            (beta_init, u_init, sigma_init) where sigma_init is on the log scale.
+            (beta_init, log_sigma_init, log_tau_init).
         """
-        # Need to think about this a little more carefully - perhaps init params in meintreg could be improved?
+
         midpoints = (y_low + y_high) / 2.0
         valid_mask = np.isfinite(midpoints)
         X_valid = X[valid_mask]
         midpoints_valid = midpoints[valid_mask]
-        # Initial estimate of beta via linear regression
+
         beta_init = np.linalg.lstsq(X_valid, midpoints_valid, rcond=None)[0]
-        # Initial random effects - small non-zero value
-        u_init = np.random.normal(loc=0, scale=0.1, size=len(np.unique(clusters or [])))
-        # sigma - std of valid midpoints
-        sigma = np.nanstd(midpoints_valid)
-        sigma = np.log(sigma)
 
-        return beta_init, u_init, sigma
+        sigma = max(np.nanstd(midpoints_valid), 1e-6)
+        log_sigma = np.log(sigma)
 
+        tau = 0.5
+        log_tau = np.log(tau)
+
+        return beta_init, log_sigma, log_tau
+        
     def fit(
         self,
         X: pd.DataFrame,
@@ -490,40 +495,32 @@ class RegressionBuilder(PiezoExporter):
         """
         Fit the mixed-effects interval regression model.
 
-        Initial Args are generated via least-squares on interval midpoints.
-        The model is then fitted using L-BFGS-B optimization.
+        Initial parameters are generated via least-squares on interval midpoints.
+        Random effects are integrated out by MeIntReg using Gauss-Hermite quadrature.
+        The model is fitted using L-BFGS-B optimization.
 
         Args:
-            X : pd.DataFrame
-                Fixed-effect design matrix including intercept.
-            y_low : np.ndarray
-                Lower interval bounds (log scale).
-            y_high : np.ndarray
-                Upper interval bounds (log scale).
-            random_effects : sequence[int], optional
-                Cluster labels defining random intercept groups.
-            bounds : list[tuple], optional
-                Parameter bounds applied in order to:
-                    β (fixed effects), u (random intercepts), log(σ).
-            options : dict, optional
-                Optimizer settings passed to scipy.optimize.minimize.
-            L2_penalties : dict, optional
-                Ridge penalties with keys: 'lambda_beta', 'lambda_u', 'lambda_sigma'.
+            X: Fixed-effect design matrix including intercept.
+            y_low: Lower interval bounds (log scale).
+            y_high: Upper interval bounds (log scale).
+            random_effects: Cluster labels defining random intercept groups.
+            bounds: Parameter bounds applied to beta, log(sigma), and log(tau).
+            options: Optimizer settings passed to scipy.optimize.minimize.
+            L2_penalties: Optional ridge penalties.
 
         Returns:
-            MeIntReg
-                Fitted model instance containing optimization results.
+            Fitted MeIntReg model.
         """
-        _b, _u, _s = self.initial_params(X, y_low, y_high, random_effects)
+
+        _b, _s, _t = self.initial_params(X, y_low, y_high, random_effects)
 
         if random_effects is not None:
-            initial_params = np.concatenate([_b, _u, [_s]])
+            initial_params = np.concatenate([_b, [_s, _t]])
         else:
             initial_params = np.concatenate([_b, [_s]])
 
-
         return MeIntReg(y_low, y_high, X.to_numpy(), random_effects).fit(
-            method="L-BFGS-B",
+            method="SLSQP",
             initial_params=initial_params,
             bounds=bounds,
             options=options,
@@ -536,6 +533,7 @@ class RegressionBuilder(PiezoExporter):
         b_bounds: tuple[Optional[float], Optional[float]] = (None, None),
         u_bounds: tuple[Optional[float], Optional[float]] = (None, None),
         s_bounds: tuple[Optional[float], Optional[float]] = (None, None),
+        t_bounds: tuple[Optional[float], Optional[float]] = (None, None),
         options: Optional[dict[str, Any]] = None,
         L2_penalties: Optional[dict[str, Any]] = None,
         fixed_effects: Optional[list[str]] = None,
@@ -545,33 +543,24 @@ class RegressionBuilder(PiezoExporter):
         """
         Fit the regression model and extract mutation-level effect estimates.
 
-        1. Defines MIC intervals.
-        2. Builds the design matrix (including intercept and optional fixed effects).
-        3. Optionally infers population clusters for random intercepts.
-        4. Fits the mixed-effects interval regression.
-        5. Extracts per-mutation effect sizes and uncertainties.
-
-        The design matrix (`self.X`) and cluster assignments (`self.clusters`)
-        are stored for post-fit inspection.
+        Random intercepts are integrated out by MeIntReg using Gauss-Hermite
+        quadrature rather than being estimated as individual parameters.
 
         Args:
-            b_bounds, u_bounds, s_bounds : tuple
-                Bounds for fixed effects, random effects, and log(σ).
-            options : dict, optional
-                Optimizer settings.
-            L2_penalties : dict, optional
-                Ridge regularization Args.
-            fixed_effects : list[str], optional
-                Additional fixed-effect columns to include.
-            random_effects : bool, default=True
-                hether to include lineage random intercepts.
-            cluster_distance : int, default=50
-                SNP distance threshold for clustering.
+            b_bounds: Bounds for fixed effects.
+            u_bounds: Retained for backwards compatibility; no longer used because
+                random effects are integrated out.
+            s_bounds: Bounds for log(sigma).
+            t_bounds: Bounds for log(tau).
+            options: Optimizer settings.
+            L2_penalties: Ridge regularization arguments.
+            fixed_effects: Additional fixed-effect columns to include.
+            random_effects: Whether to include population-structure random intercepts.
+            cluster_distance: SNP distance threshold for clustering.
 
         Returns:
-            (model, effects) : tuple
-                model : Fitted MeIntReg object.
-                effects : pd.DataFrame with mutation effect estimates.
+            (model, effects), where model is the fitted MeIntReg object and effects
+            contains mutation-level effect estimates.
         """
 
         validate_regression_predict_inputs(
@@ -589,42 +578,93 @@ class RegressionBuilder(PiezoExporter):
 
         y_low, y_high = self.define_intervals(self.samples)
 
-        #don't fit synonymous mutations (theyre used for clustering)
+        # Don't fit synonymous mutations (they are used for clustering)
         aa = self.mutations["MUTATION"].str.split("@").str[-1]
-        syn_mask = aa.str.match(r'^[A-Z].*[A-Z]$') & (aa.str[0] == aa.str[-1])
+        syn_mask = aa.str.match(r'^[A-Z].\*[A-Z]$') & (aa.str[0] == aa.str[-1])
 
         if len(self.genes) > 0:
             self.target_mutations = self.mutations[
-                self.mutations["MUTATION"].str.split("@").str[0].isin(self.genes)
-                & (~syn_mask)
+                self.mutations["MUTATION"].str.split("@").str[0].isin(self.genes) & (~syn_mask)
             ]
         else:
             self.target_mutations = self.mutations[~syn_mask]
 
-        self.df = pd.merge(
-            self.samples, self.target_mutations, on=["UNIQUEID"], how="left"
-        )
+        self.df = pd.merge(self.samples, self.target_mutations, on=["UNIQUEID"], how="left")
 
         X = self.build_X(self.df, fixed_effects=fixed_effects)
         self.X = X
 
         if random_effects:
-            self.clusters = self.calc_clusters(cluster_distance)
-            u_bounds_ = [u_bounds] * len(np.unique(self.clusters))
+            clusters = self.calc_clusters(cluster_distance)
+            n_clusters = len(np.unique(clusters))
+
+            if n_clusters < 2:
+                print("Only one population cluster detected; fitting without random effects.")
+                self.clusters = None
+            else:
+                self.clusters = clusters
         else:
             self.clusters = None
-            u_bounds_ = []
 
         b_bounds_ = [b_bounds] * X.shape[1]
-        bounds_ = b_bounds_ + u_bounds_ + [s_bounds]
+
+        if self.clusters is not None:
+            bounds_ = b_bounds_ + [s_bounds, t_bounds]
+        else:
+            bounds_ = b_bounds_ + [s_bounds]
 
         model = self.fit(X, y_low, y_high, self.clusters, bounds_, options, L2_penalties)
 
-        print (model.result)
+        print(model.result)
 
         effects = self.extract_effects(model, X, fixed_effects)
 
         return model, effects
+
+    def calc_hessian(self, model, rel_step=1e-5, abs_step=1e-6):
+        """
+        Calculate the Hessian of the fitted negative marginal log-likelihood.
+        """
+        return model.hessian()
+
+
+    def calc_standard_errors(self, model, effects, indices, mutations, intercept_idx):
+
+        #calculate effect and MIC standard errors from hessian matrix at the optimum
+        hessian_ = self.calc_hessian(model)
+        #regularised inverse for stability
+        ridge = 1e-8 * np.eye(hessian_.shape[0])
+        cov = np.linalg.pinv(hessian_ + ridge)
+
+        effect_ses = []
+        pred_logmic_ses = []
+        mic_ses = []
+
+        for m_idx, mutation_name in zip(indices, mutations):
+            var_effect = cov[m_idx, m_idx]
+            var_effect = max(var_effect, 0.0)
+            effect_se = np.sqrt(var_effect)
+            effect_ses.append(effect_se)
+
+            var_theta = (
+                cov[intercept_idx, intercept_idx]
+                + cov[m_idx, m_idx]
+                + 2.0 * cov[intercept_idx, m_idx]
+            )
+            var_theta = max(var_theta, 0.0)
+            pred_logmic_se = np.sqrt(var_theta)
+            pred_logmic_ses.append(pred_logmic_se)
+
+            mic = effects.loc[effects["Mutation"] == mutation_name, "MIC"].values[0]
+            mic_se = mic * np.log(self.dilution_factor) * pred_logmic_se
+            mic_ses.append(mic_se)
+
+        effects["effect_se"] = effect_ses
+        effects["predicted_logMIC_se"] = pred_logmic_ses
+        effects["MIC_se"] = mic_ses
+
+        return effects
+
 
     def extract_effects(
         self,
@@ -640,16 +680,22 @@ class RegressionBuilder(PiezoExporter):
 
             effect_size = β_mutation
 
-        Absolute predicted MIC is computed as:
+        Mutation-level uncertainty is quantified using:
+
+            effect_se = SE(β_mutation)
+
+        Absolute predicted MIC for a strain carrying the mutation is computed as:
+
+            predicted_logMIC = β0 + β_mutation
 
             MIC = dilution_factor^(β0 + β_mutation)
 
-        Standard errors are derived from the inverse Hessian and include
-        covariance between the intercept and mutation coefficient:
+        Uncertainty in the predicted MIC includes both intercept and mutation
+        uncertainty and is derived from the inverse Hessian:
 
             Var(β0 + β_mutation)
 
-        Uncertainty is propagated to MIC scale via the delta method.
+        Standard errors on the MIC scale are obtained using the delta method.
 
         Args:
             model : MeIntReg
@@ -663,20 +709,31 @@ class RegressionBuilder(PiezoExporter):
             pd.DataFrame
                 Columns:
                     Mutation
-                    effect_size (log2 shift)
-                    effect_std (log2 scale, if available)
-                    fold_change (relative to baseline)
-                    MIC (absolute predicted MIC)
-                    MIC_std (delta-method SE, if available)
+                        Mutation identifier.
+                    effect_size
+                        Estimated mutation coefficient (log2 MIC shift relative
+                        to baseline).
+                    effect_se
+                        Standard error of the mutation coefficient.
+                    fold_change
+                        Multiplicative MIC change relative to baseline.
+                    predicted_logMIC
+                        Predicted log MIC for a strain carrying the mutation.
+                    predicted_logMIC_se
+                        Standard error of the predicted log MIC, including
+                        intercept–mutation covariance.
+                    MIC
+                        Predicted MIC on the original concentration scale.
+                    MIC_se
+                        Delta-method standard error of the predicted MIC.
         """
         p = X.shape[1]
         coefs = model.result.x[:p]
 
-        # Identify intercept
         intercept_idx = X.columns.get_loc("Intercept")
         beta0 = coefs[intercept_idx]
 
-        # Identify fixed-effect dummy columns (to exclude from mutation list)
+        # Exclude intercept and any fixed-effect dummy columns from mutation list
         columns_to_exclude = (
             {
                 col
@@ -687,89 +744,43 @@ class RegressionBuilder(PiezoExporter):
             if fixed_effects
             else set()
         )
-
         columns_to_exclude.add("Intercept")
 
-        mutation_columns = [
-            col for col in X.columns if col not in columns_to_exclude
-        ]
-
-        mutation_indices = [
-            X.columns.get_loc(col) for col in mutation_columns
-        ]
+        mutation_columns = [col for col in X.columns if col not in columns_to_exclude]
+        mutation_indices = [X.columns.get_loc(col) for col in mutation_columns]
 
         mutation_effects = coefs[mutation_indices]
 
         effects = pd.DataFrame(
             {
                 "Mutation": mutation_columns,
-                "effect_size": mutation_effects,  # log2 shift
+                "effect_size": mutation_effects,
             }
         )
 
-        # Baseline MIC
-        baseline_MIC = self.dilution_factor ** beta0
-        # Fold change from mutation
-        effects["fold_change"] = (
-            self.dilution_factor ** effects["effect_size"]
-        )
-        # Absolute predicted MIC
-        effects["MIC"] = baseline_MIC * effects["fold_change"]
+        # Mutation-only fold change
+        effects["fold_change"] = self.dilution_factor ** effects["effect_size"]
+        # Absolute predicted log MIC and MIC
+        effects["predicted_logMIC"] = beta0 + effects["effect_size"]
+        effects["MIC"] = self.dilution_factor ** effects["predicted_logMIC"]
 
-        # If Hessian available, compute SEs properly
-        if hasattr(model.result, "hess_inv"):
+        effects = self.calc_standard_errors(
+            model, effects, mutation_indices, mutation_columns, intercept_idx
+            )
 
-            # Convert L-BFGS product to dense matrix
-            hess_inv_dense = np.asarray(model.result.hess_inv.todense())
-
-            beta0_idx = intercept_idx
-
-            theta_stds = []
-            mic_stds = []
-
-            for m_idx in mutation_indices:
-
-                # Variance of (beta0 + beta_m)
-                var_theta = (
-                    hess_inv_dense[beta0_idx, beta0_idx]
-                    + hess_inv_dense[m_idx, m_idx]
-                    + 2 * hess_inv_dense[beta0_idx, m_idx]
-                )
-
-                # Numerical guard
-                var_theta = max(var_theta, 0.0)
-
-                sd_theta = np.sqrt(var_theta)
-                theta_stds.append(sd_theta)
-
-                # Delta method to MIC scale
-                mic_sd = (
-                    effects.loc[
-                        effects["Mutation"] == X.columns[m_idx], "MIC"
-                    ].values[0]
-                    * np.log(self.dilution_factor)
-                    * sd_theta
-                )
-
-                mic_stds.append(mic_sd)
-
-            effects["effect_std"] = theta_stds
-            effects["MIC_std"] = mic_stds
-
-            effects = effects[
-                [
-                    "Mutation",
-                    "effect_size",
-                    "effect_std",
-                    "fold_change",
-                    "MIC",
-                    "MIC_std",
-                ]
+        effects = effects[
+            [
+                "Mutation",
+                "effect_size",
+                "effect_se",
+                "fold_change",
+                "predicted_logMIC",
+                "predicted_logMIC_se",
+                "MIC",
+                "MIC_se",
             ]
-        else:
-            effects = effects[
-                ["Mutation", "effect_size", "fold_change", "MIC"]
-            ]
+        ]
+
 
         return effects
 
@@ -800,10 +811,10 @@ class RegressionBuilder(PiezoExporter):
         Classify mutation effects as Resistant (R), Susceptible (S), or Undetermined (U) using a z-test.
 
         Effects are classified by comparing effect_size to the (log-space) breakpoint and applying
-        a two-tailed z-test using effect_std.
+        a two-tailed z-test using predicted_logMIC_se.
 
         Args:
-            effects: Effects DataFrame with 'effect_size' and 'effect_std'.
+            effects: Effects DataFrame with 'predicted_logMIC' and 'predicted_logMIC_sed'.
             p: Confidence parameter (default 0.95).
 
         Returns:
@@ -815,14 +826,18 @@ class RegressionBuilder(PiezoExporter):
         breakpoint = self.log_transf_val(ecoff)
 
         effects["p_value"] = effects.apply(
-            lambda row: self.z_test(row["effect_size"], breakpoint, row["effect_std"]),
+            lambda row: self.z_test(
+                row["predicted_logMIC"],
+                breakpoint,
+                row["predicted_logMIC_se"],
+            ),
             axis=1,
         )
 
         effects["Classification"] = np.select(
             condlist=[
-                (effects["effect_size"] > breakpoint) & (effects["p_value"] < (1 - p)),
-                (effects["effect_size"] < breakpoint) & (effects["p_value"] < (1 - p)),
+                (effects["predicted_logMIC"] > breakpoint) & (effects["p_value"] < (1 - p)),
+                (effects["predicted_logMIC"] < breakpoint) & (effects["p_value"] < (1 - p)),
             ],
             choicelist=["R", "S"],
             default="U",
@@ -853,6 +868,7 @@ class RegressionBuilder(PiezoExporter):
         b_bounds: tuple[Optional[float], Optional[float]] = (None, None),
         u_bounds: tuple[Optional[float], Optional[float]] = (None, None),
         s_bounds: tuple[Optional[float], Optional[float]] = (None, None),
+        t_bounds: tuple[Optional[float], Optional[float]] = (None, None),
         options: Optional[dict[str, Any]] = None,
         L2_penalties: Optional[dict[str, Any]] = None,
         p: float = 0.95,
@@ -896,6 +912,7 @@ class RegressionBuilder(PiezoExporter):
             b_bounds=b_bounds,
             u_bounds=u_bounds,
             s_bounds=s_bounds,
+            t_bounds=t_bounds, 
             options=options,
             L2_penalties=L2_penalties,
             fixed_effects=fixed_effects,
@@ -910,18 +927,17 @@ class RegressionBuilder(PiezoExporter):
         breakpoint = self.log_transf_val(ecoff)
 
         def add_mutation_from_row(row: pd.Series) -> None:
-            evidence: dict[str, Any] = {
+            evidence = {
                 "MIC": row.get("MIC"),
                 "ECOFF": ecoff,
                 "effect_size": row.get("effect_size"),
+                "effect_se": row.get("effect_se"),
+                "predicted_logMIC": row.get("predicted_logMIC"),
+                "predicted_logMIC_se": row.get("predicted_logMIC_se"),
                 "breakpoint": breakpoint,
                 "p_value": row.get("p_value"),
+                "MIC_se": row.get("MIC_se"),
             }
-            # Only attach std fields if present.
-            if "MIC_std" in row:
-                evidence["MIC_std"] = row.get("MIC_std")
-            if "effect_std" in row:
-                evidence["effect_std"] = row.get("effect_std")
 
             self.add_mutation(str(row["Mutation"]), str(row["Classification"]), evidence)
 
