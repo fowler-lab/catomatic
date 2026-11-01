@@ -10,7 +10,7 @@ from .defence_module import (
     validate_regression_predict_inputs,
     validate_regression_classify_inputs,
 )
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence, Tuple, cast
 from intreg.meintreg import MeIntReg
 from sklearn.cluster import AgglomerativeClustering
 
@@ -628,7 +628,14 @@ class RegressionBuilder(PiezoExporter):
         return model.hessian()
 
 
-    def calc_standard_errors(self, model, effects, indices, mutations, intercept_idx):
+    def calc_standard_errors(
+        self,
+        model: Any,
+        effects: pd.DataFrame,
+        indices: Sequence[int],
+        mutations: Sequence[str],
+        intercept_idx: int,
+    ) -> pd.DataFrame:
 
         #calculate effect and MIC standard errors from hessian matrix at the optimum
         hessian_ = self.calc_hessian(model)
@@ -730,7 +737,7 @@ class RegressionBuilder(PiezoExporter):
         p = X.shape[1]
         coefs = model.result.x[:p]
 
-        intercept_idx = X.columns.get_loc("Intercept")
+        intercept_idx = cast(int, X.columns.get_loc("Intercept"))
         beta0 = coefs[intercept_idx]
 
         # Exclude intercept and any fixed-effect dummy columns from mutation list
@@ -747,7 +754,7 @@ class RegressionBuilder(PiezoExporter):
         columns_to_exclude.add("Intercept")
 
         mutation_columns = [col for col in X.columns if col not in columns_to_exclude]
-        mutation_indices = [X.columns.get_loc(col) for col in mutation_columns]
+        mutation_indices = [cast(int, X.columns.get_loc(col)) for col in mutation_columns]
 
         mutation_effects = coefs[mutation_indices]
 
