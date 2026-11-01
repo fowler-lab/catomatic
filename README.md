@@ -23,15 +23,15 @@ The first is used in [https://doi.org/10.1101/2025.01.30.635633](https://doi.org
 
 This method relies on the logic that mutations that do not cause resistance can co-occur with those that do. If a mutation in isolation (solo) does not cause resistance, then it is not contributing to the phenotype when present in a mixture either.
 
-Mutations that occur in isolation across specified genes are traversed in sequence, and if their proportion of drug-susceptibility (vs. resistance) passes the specified statistical test, they are characterized as benign (susceptible) and removed from the dataset. This step repeats iteratively until no more solo benign mutations are found.
+Mutations that occur in isolation are traversed in sequence. When they meet the susceptible criteria for the selected test, they are characterized as benign (`S`) and removed from the dataset. This step repeats iteratively until no more solo benign mutations are found.
 
 Remaining mutations are classified based on their resistance rates and statistical test results. Those that don’t meet thresholds are labeled as `U`.
 
 The classification approach supports:
 
-- **No test**: assumes homogeneous susceptibility is sufficient for S
-- **Binomial test**: against a specified background resistance rate
-- **Fisher's test**: using a contingency background
+- **No test**: calls a mutation `S` during iterative unlocking when all its solo observations are susceptible; remaining solo mutations are `U`
+- **Binomial test**: tests the solo resistance rate against a specified background resistance rate
+- **Fisher's test**: compares the mutation solo contingency table with the no-mutation solo background
 
 ### Optional Interventions
 
@@ -43,9 +43,9 @@ Because the method uses GARC1 grammar, rules like `{rpoB@*_fs:R}` can be supplie
 - Be additive (lower priority than specific entries)
 - Replace matching mutations (requires `replace=True` and `wildcards` supplied)
 
-The catalogue can be returned as a dictionary or a Piezo-compatible `pandas.DataFrame`.
+The built catalogue is available as a dictionary through the `catalogue.catalogue` attribute. It can also be converted to a Piezo-compatible `pandas.DataFrame` with `build_piezo()`.
 
-Contingency tables, proportions, p-values, and Wilson confidence intervals are stored in the `EVIDENCE` field.
+Evidence is stored with each catalogue entry and exported in the `EVIDENCE` field. It includes proportions, Wilson confidence intervals, solo contingency tables used for classification, full sample-level contingency tables for description, and p-values when a statistical test is used. Sample IDs can be included with `record_ids=True`.
 
 ### Example Workflow using Fisher's:
 
@@ -100,7 +100,7 @@ from catomatic.BinaryCatalogue import BinaryBuilder
 catalogue = BinaryBuilder(samples=samples_df, mutations=mutations_df).build()
 
 # View dictionary version
-cat_dict = catalogue.return_catalogue()
+cat_dict = catalogue.catalogue
 
 # Convert to Piezo-compatible format
 catalogue_df = catalogue.build_piezo(
@@ -124,7 +124,7 @@ catalogue.to_piezo(
 
 ### CLI
 
-After installation, the simplest way to run the catomatic catalogue builder is via the command line interface using the `binary` subcommand. You must use either `--to_piezo` or `--to_json` to specify the output format. Additional metadata is required when using `--to_piezo`.
+After installation, the simplest way to run the catomatic catalogue builder is via the command line interface using the `binary` subcommand. Use `--to_piezo` or `--to_json` to export the catalogue. If neither is supplied, no file is exported. Additional metadata is required when using `--to_piezo`.
 
 #### Export to JSON
 
@@ -153,6 +153,8 @@ catomatic binary \
 
 ### CLI Parameters
 
+The Binary CLI does not expose the Python `build()` options `tails` or `min_count`. The output flags are not mutually exclusive; if both are supplied, both exporters write to the same `--outfile`, so use only one.
+
 | Parameter          | Type    | Description                                                                                    |
 | ------------------ | ------- | ---------------------------------------------------------------------------------------------- |
 | `--samples`        | `str`   | Path to the samples (phenotypes) file. Required.                                               |
@@ -165,11 +167,16 @@ catomatic binary \
 | `--version`        | `str`   | Catalogue version. Required with `--to_piezo`.                                                 |
 | `--drug`           | `str`   | Name of the drug. Required with `--to_piezo`.                                                  |
 | `--wildcards`      | `str`   | Path to JSON file containing wildcard mutation definitions. Required with `--to_piezo`.        |
-| `--test`           | `str`   | Type of statistical test to apply. One of: `None`, `Binomial`, or `Fisher`. Optional.          |
-| `--background`     | `float` | Background mutation rate (0–1). Required if `--test Binomial` is used.                         |
-| `--p`              | `float` | P-value threshold for statistical significance. Optional. Defaults to `0.95`.                  |
-| `--tails`          | `str`   | Tail type for statistical test. One of: `one`, `two`. Optional. Defaults to `two`.             |
-| `--strict_unlock`  | `flag`  | If set, disables classification of susceptible (`S`) mutations unless statistically confident. |
+| `--test`           | `str`   | Type of statistical test to apply: `Binomial` or `Fisher`. Optional; if omitted, no statistical test is used. |
+| `--background`     | `float` | Background resistance rate (0–1). Required if `--test Binomial` is used.                       |
+| `--p`              | `float` | Confidence level used for statistical testing. Optional. Defaults to `0.95` (a 0.05 significance threshold). |
+| `--strict_unlock`  | `flag`  | For two-tailed tests, require statistical significance to classify homogeneous susceptible mutations as `S` during iterative unlocking. |
+| `--frs`            | `float` | Optional fraction-read-support threshold. Requires an `FRS` column in the mutations file.       |
+| `--seed`           | `str[]`  | Optional list of mutations to seed as susceptible before building.                              |
+| `--record_ids`     | `flag`  | Include sample IDs in evidence records.                                                        |
+| `--grammar`        | `str`   | Grammar used for Piezo export. Default: `GARC1`.                                                |
+| `--values`         | `str`   | Prediction values for Piezo export. Default: `RUS`.                                             |
+| `--for_piezo`      | `flag`  | Add placeholder rows for Piezo export. Default: `False` in the CLI.                            |
 
 ## Running catomatic's Regression Builder
 
@@ -285,8 +292,8 @@ catomatic regression \
 
 ### Notes
 
-- When using post-hoc rule updates via .update(), you must provide wildcards and set replace=True if you intend to override existing entries.
-- For Piezo export, placeholder entries are inserted automatically if needed to satisfy parser requirements (R, S, and U must be represented).
+- For `BinaryBuilder`, use `update_catalogue()` to apply post-hoc rules. Supply `wildcards` and set `replace=True` to replace entries matched by an aggregate rule. Specific entries can be added or replaced without `replace=True`.
+- For Piezo export, placeholder entries are inserted when `for_piezo=True` and needed to satisfy parser requirements (R, S, and U must be represented). The Python export methods default to `for_piezo=True`; the CLI flag is off by default.
 - The EVIDENCE column includes contingency tables, proportions, confidence intervals, and p-values, and may optionally include sample IDs if `record_ids=True`.
 - To build a catalogue with the regression builder, as currently implemented, requires an ecoff as it will compare the predited effected against the background to supply an R/S/U label
   - To only calculate predicted effects, this can be done in Python by calling RegressionBuilder.predict_effects()

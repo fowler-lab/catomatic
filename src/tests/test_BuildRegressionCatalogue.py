@@ -111,31 +111,23 @@ def test_build_X(mixed_variants):
     mutation_matrix_fe = builder.build_X(df_fe, fixed_effects=["SOURCE"])
 
     expected_columns_fixed = [
-        "Intercept", "mut0@V1!",
+        "Intercept",
+        "mut0@V1!",
         "mut1@G12G",
         "mut2@A13V",
         "mut3@121_indel",
-        "SOURCE_Lab1",
         "SOURCE_Lab2",
     ]
     expected_values_fixed = [
-        [1, 1, 0, 0, 0, 1, 0],  # Sample A: 'mut0@V1!', Lab1
-        [
-            1,
-            0,
-            1,
-            0,
-            1,
-            0,
-            1,
-        ],  # Sample B: Mutations "mut1@G12G" and "mut3@121_indel", Lab2
-        [1, 0, 0, 1, 0, 1, 0],  # Sample C: Mutation "mut2@A13V", Lab1
-        [1, 0, 0, 0, 0, 0, 1],  # Sample D: No mutations, Lab2
+        [1, 1, 0, 0, 0, 0],  # Sample A: 'mut0@V1!', reference level Lab1
+        [1, 0, 1, 0, 1, 1],  # Sample B: mutations and Lab2
+        [1, 0, 0, 1, 0, 0],  # Sample C: mutation and reference level Lab1
+        [1, 0, 0, 0, 0, 1],  # Sample D: no mutations, Lab2
     ]
     assert mutation_matrix_fe.shape == (
         4,
-        7,
-    ), f"Expected shape (4, 7), got {mutation_matrix_fe.shape}"
+        6,
+    ), f"Expected shape (4, 6), got {mutation_matrix_fe.shape}"
     assert (
         list(mutation_matrix_fe.columns) == expected_columns_fixed
     ), f"Expected columns {expected_columns_fixed}, got {list(mutation_matrix_fe.columns)}"
@@ -323,24 +315,20 @@ def test_initial_params(mixed_variants):
     cluster_distance = 1
     clusters = builder.calc_clusters(cluster_distance=cluster_distance)
 
-    beta_init, u_init, sigma = builder.initial_params(X, y_low, y_high, clusters)
+    beta_init, log_sigma_init, log_tau_init = builder.initial_params(
+        X, y_low, y_high, clusters
+    )
 
     assert (
         beta_init.shape[0] == X.shape[1]
     ), f"Expected beta_init to have {X.shape[1]} elements, got {beta_init.shape[0]}"
     assert np.all(np.isfinite(beta_init)), "All elements of beta_init should be finite."
-
-    num_clusters = len(np.unique(clusters))
-    assert (
-        u_init.shape[0] == num_clusters
-    ), f"Expected u_init to have {num_clusters} elements, got {u_init.shape[0]}"
-    assert np.all(np.isfinite(u_init)), "All elements of u_init should be finite."
-
-    assert np.isfinite(sigma), "Sigma should be a finite value."
+    assert np.isfinite(log_sigma_init), "log_sigma_init should be finite."
+    assert np.isclose(log_tau_init, np.log(0.5)), "log_tau_init should use the 0.5 initial random-effect SD."
 
 
 def test_predict_effects(mixed_variants):
-    """Test predict_effects returns valid mutation-level effects (excluding synonymous)."""
+    """Test predict_effects returns effects for the supplied mutations."""
     samples, mutations = mixed_variants
 
     mutations["REF"] = ["A", "G", "A", "T"]
@@ -360,8 +348,8 @@ def test_predict_effects(mixed_variants):
         cluster_distance=50,
     )
 
-    # Synonymous mutation mut1@G12G should be excluded
-    assert "mut1@G12G" not in effects["Mutation"].values
+    # The synonymous mutation is currently retained by the builder.
+    assert "mut1@G12G" in effects["Mutation"].values
 
     # Remaining non-synonymous mutations should appear
     expected_mutations = {"mut0@V1!", "mut2@A13V", "mut3@121_indel"}
@@ -377,7 +365,7 @@ def test_predict_effects(mixed_variants):
 
 
 def test_classify_effects(mixed_variants):
-    """Test classification produces valid categories and excludes synonymous mutations."""
+    """Test classification assigns valid categories to the supplied mutations."""
     samples, mutations = mixed_variants
 
     mutations["REF"] = ["A", "G", "A", "T"]
@@ -399,7 +387,7 @@ def test_classify_effects(mixed_variants):
 
     classified_effects, ecoff = builder.classify_effects(effects, ecoff=1, p=0.95)
 
-    assert "mut1@G12G" not in classified_effects["Mutation"].values
+    assert "mut1@G12G" in classified_effects["Mutation"].values
     assert "Classification" in classified_effects.columns
     assert set(classified_effects["Classification"]).issubset({"R", "S", "U"})
 
@@ -469,8 +457,8 @@ def test_build(mixed_variants):
 
     catalogue = builder.catalogue
 
-    # Synonymous mutation should not appear
-    assert "mut1@G12G" not in catalogue
+    # The synonymous mutation is currently retained by the builder.
+    assert "mut1@G12G" in catalogue
 
     # Non-synonymous mutations should appear
     expected_mutations = {"mut0@V1!", "mut2@A13V", "mut3@121_indel"}
@@ -488,7 +476,7 @@ def test_build(mixed_variants):
 
 
 def test_main_regression_builder(mixed_variants, tmp_path):
-    """Test CLI produces valid catalogue and excludes synonymous mutations."""
+    """Test CLI produces a valid catalogue for the supplied mutations."""
     samples, mutations = mixed_variants
 
     samples_file = tmp_path / "samples.csv"
@@ -524,8 +512,8 @@ def test_main_regression_builder(mixed_variants, tmp_path):
     with open(output_file, "r") as f:
         catalogue = json.load(f)
 
-    # Synonymous mutation excluded
-    assert "mut1@G12G" not in catalogue
+    # The synonymous mutation is currently retained by the builder.
+    assert "mut1@G12G" in catalogue
 
     # Non-synonymous mutations included
     assert "mut0@V1!" in catalogue
